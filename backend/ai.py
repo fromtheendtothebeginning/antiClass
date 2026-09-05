@@ -385,6 +385,16 @@ def _tavily_search(query, api_key):
     return "\n".join(out)
 
 
+def image_part(path):
+    """把本地图片文件转成 OpenAI image_url part（供对话/识图消息复用）。"""
+    try:
+        b64 = base64.b64encode(Path(path).read_bytes()).decode("ascii")
+    except OSError:
+        return None
+    mime = mimetypes.guess_type(path)[0] or "image/png"
+    return {"type": "image_url", "image_url": {"url": f"data:{mime};base64,{b64}"}}
+
+
 def _build_user_content(text, image_paths, extra=None):
     parts = []
     if extra:

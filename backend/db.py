@@ -39,7 +39,7 @@ DB_CONFIG = {**_load_db_config(), "charset": "utf8mb4"}
 DB_NAME = os.environ.get("MYSQL_DB", "scholarship")
 
 STUDENT_FIELDS = ("sid", "name", "class_id", "course_count", "credits", "gpa", "deyu", "score", "tiyu", "meiyu", "laoyu", "fujia", "total")
-AWARD_FIELDS = ("id", "sid", "name", "class_id", "category", "points", "basis", "evidence", "folder", "approved", "created_at")
+AWARD_FIELDS = ("id", "sid", "name", "class_id", "category", "points", "basis", "evidence", "folder", "approved", "reject_reason", "created_at")
 ADMIN_FIELDS = ("username", "role", "class_id", "created_at")
 
 SCHEMA = """
@@ -68,6 +68,7 @@ CREATE TABLE IF NOT EXISTS awards (
     evidence JSON NOT NULL,
     folder VARCHAR(64) NOT NULL DEFAULT '',
     approved VARCHAR(8) NOT NULL DEFAULT '否',
+    reject_reason VARCHAR(500) NOT NULL DEFAULT '',
     created_at DATETIME NOT NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
@@ -145,6 +146,7 @@ def init_db():
         for table, column, ddl in (
             ("students", "class_id", "class_id CHAR(32) NOT NULL DEFAULT ''"),
             ("awards", "class_id", "class_id CHAR(32) NOT NULL DEFAULT ''"),
+            ("awards", "reject_reason", "reject_reason VARCHAR(500) NOT NULL DEFAULT ''"),
         ):
             cur.execute(
                 "SELECT COUNT(*) AS n FROM information_schema.COLUMNS "
@@ -255,12 +257,12 @@ def insert_awards(records):
     with tx() as cur:
         for r in records:
             cur.execute(
-                "INSERT INTO awards (id,sid,name,class_id,category,points,basis,evidence,folder,approved,created_at) "
-                "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
+                "INSERT INTO awards (id,sid,name,class_id,category,points,basis,evidence,folder,approved,reject_reason,created_at) "
+                "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
                 (
                     r["id"], r["sid"], r["name"], r.get("class_id", ""), r["category"], round(float(r["points"]), 1),
                     r["basis"], json.dumps(r["evidence"], ensure_ascii=False), r["folder"],
-                    r["approved"], r["created_at"],
+                    r["approved"], r.get("reject_reason", "") or "", r["created_at"],
                 ),
             )
 
@@ -282,7 +284,7 @@ def get_award(aid):
 
 
 def update_award(aid, **fields):
-    allowed = {"category", "points", "approved"}
+    allowed = {"category", "points", "approved", "reject_reason", "basis", "evidence"}
     sets = ", ".join(f"`{k}`=%s" for k in fields)
     with tx() as cur:
         cur.execute(

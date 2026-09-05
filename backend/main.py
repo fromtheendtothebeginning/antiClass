@@ -118,6 +118,16 @@ class ApproveBody(BaseModel):
     category: str | None = None
 
 
+class RejectBody(BaseModel):
+    reason: str = ""
+
+
+class EditAwardBody(BaseModel):
+    category: str
+    points: float = 0
+    basis: str = ""
+
+
 class DraftItemBody(BaseModel):
     category: str
     points: float = 0
@@ -391,19 +401,52 @@ def assess_start(sid: str = Form(...), request: Request = None):
 
 
 @app.post("/api/assess/{session_id}/message")
-def assess_message(session_id: str, body: AssessMsgBody, request: Request = None):
-    ip = request.client.host if request and request.client else "unknown"
+async def assess_message(session_id: str, request: Request):
+    ip = request.client.host if request.client else "unknown"
     rate_limit(f"assess_msg:{ip}", 30, 600)
     session = assess.get(session_id)
     if not session:
         raise HTTPException(status_code=404, detail="会话不存在或已过期，请重新开始")
     if session.get("ended"):
         raise HTTPException(status_code=400, detail="会话已结束，如需继续请重新开始")
-    if not (body.text or "").strip():
+
+    ctype = (request.headers.get("content-type") or "").lower()
+    text = ""
+    files = []
+    if ctype.startswith("multipart/"):
+        form = await request.form()
+        text = (form.get("text") or "").strip()
+        files = form.getlist("files") if "files" in form else []
+    elif ctype.startswith("application/json"):
+        body = await request.json()
+        text = (body.get("text") or "").strip() if isinstance(body, dict) else ""
+    if not text and not files:
         raise HTTPException(status_code=400, detail="请输入内容")
-    events = assess.run_turn(session_id, body.text)
+
+    image_paths = []
+    temp_dir = None
+    file_list = [f for f in files if getattr(f, "filename", None)][:MAX_FILES]
+    if file_list:
+        temp_dir = UPLOADS_DIR / ("assess_" + uuid.uuid4().hex)
+        temp_dir.mkdir(parents=True, exist_ok=True)
+        try:
+            for f in file_list:
+                name = save_upload(f, temp_dir)
+                if Path(f.filename).suffix.lower() in {".jpg", ".jpeg", ".png", ".gif", ".webp", ".bmp"}:
+                    image_paths.append(str(temp_dir / name))
+        except HTTPException:
+            shutil.rmtree(temp_dir, ignore_errors=True)
+            raise
+
+    def _gen():
+        try:
+            yield from assess.run_turn(session_id, text, image_paths or None)
+        finally:
+            if temp_dir:
+                shutil.rmtree(temp_dir, ignore_errors=True)
+
     return StreamingResponse(
-        _sse(events),
+        _sse(_gen()),
         media_type="text/event-stream",
         headers={
             "Cache-Control": "no-cache",
@@ -1064,7 +1107,7 @@ def approve_award(aid: str, body: ApproveBody, authorization: str = Header(defau
 
 
 @app.post("/api/awards/{aid}/reject")
-def reject_award(aid: str, authorization: str = Header(default="")):
+def reject_award(aid: str, body: RejectBody = None, authorization: str = Header(default="")):
     session = require_token(authorization)
     record = db.get_award(aid)
     if not record:
@@ -1072,7 +1115,35 @@ def reject_award(aid: str, authorization: str = Header(default="")):
     check_class_scope(session, record.get("class_id", ""))
     if record["approved"] != "否":
         raise HTTPException(status_code=400, detail="该申报已处理，不能重复审批")
-    db.update_award(aid, approved="驳回")
+    reason = ((body.reason if body else "") or "").strip()
+    if not reason:
+        raise HTTPException(status_code=400, detail="请填写驳回理由")
+    reason = reason[:500]
+    db.update_award(aid, approved="驳回", reject_reason=reason)
+    record = db.get_award(aid)
+    return {"ok": True, "award": record}
+
+
+@app.post("/api/awards/{aid}/edit")
+def edit_award(aid: str, body: EditAwardBody, authorization: str = Header(default="")):
+    """驳回后编辑：仅 approved=驳回 的记录允许修改栏目/分值/依据；保存后回到待审批重新走审批。"""
+    session = require_token(authorization)
+    record = db.get_award(aid)
+    if not record:
+        raise HTTPException(status_code=404, detail="申报不存在")
+    check_class_scope(session, record.get("class_id", ""))
+    if record["approved"] != "驳回":
+        raise HTTPException(status_code=400, detail="仅已驳回的申报可编辑后重提")
+    category = body.category
+    if category not in CATEGORY_FIELD:
+        raise HTTPException(status_code=400, detail="加分栏目无效")
+    cap = CATEGORY_CAP[category]
+    points = round(min(max(body.points, 0.0), cap), 1)
+    basis = (body.basis or "").strip()
+    if not basis:
+        raise HTTPException(status_code=400, detail="加分依据不能为空")
+    basis = basis[:MAX_TEXT_LEN]
+    db.update_award(aid, category=category, points=points, basis=basis, approved="否", reject_reason="")
     record = db.get_award(aid)
     return {"ok": True, "award": record}
 

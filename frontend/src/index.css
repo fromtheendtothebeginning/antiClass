@@ -1103,6 +1103,75 @@ button {
   height: 40px;
 }
 
+.chat-attach-btn {
+  flex: 0 0 auto;
+  white-space: nowrap;
+  line-height: 24px;
+}
+
+.chat-attach-preview {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 8px;
+}
+
+.file-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 10px;
+  font-size: 12px;
+  border: 1px solid var(--border-color);
+  border-radius: 999px;
+  background: var(--bg-card);
+  color: var(--text-secondary);
+}
+
+.file-chip.is-img {
+  border-color: var(--accent-2-border, var(--border-color));
+  color: var(--accent-1);
+}
+
+.chat-files {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-top: 6px;
+}
+
+.chip-x {
+  border: none;
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  font-size: 14px;
+  line-height: 1;
+  padding: 0 2px;
+}
+
+.chip-x:hover {
+  color: var(--danger);
+}
+
+/* 驳回理由 / 弹窗文本域 */
+.reject-reason {
+  color: var(--danger);
+  font-size: 13px;
+}
+
+.modal-textarea {
+  width: 100%;
+  min-height: 72px;
+  margin-top: 6px;
+  box-sizing: border-box;
+}
+
+.form-label {
+  font-size: 13px;
+  color: var(--text-secondary);
+}
+
 .assess-actions {
   display: flex;
   gap: 10px;

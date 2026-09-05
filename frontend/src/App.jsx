@@ -11,6 +11,7 @@ import {
   deleteAdmin,
   deleteAward,
   deleteClass,
+  editAward,
   evidenceUrl,
   exportExcel,
   fetchAdmins,
@@ -64,21 +65,28 @@ function isImage(name) {
 function AwardCard({ award, token, onRefresh, onPreview }) {
   const [category, setCategory] = useState(award.category);
   const [points, setPoints] = useState(String(award.points));
+  const [basis, setBasis] = useState(award.basis || "");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [confirmDel, setConfirmDel] = useState(false);
+  const [rejectOpen, setRejectOpen] = useState(false);
+  const [rejectReason, setRejectReason] = useState("");
+  const [editOpen, setEditOpen] = useState(false);
   const canEdit = !!token;
+  const isRejected = award.approved === "驳回";
   const statusClass = award.approved === "否" ? "pending" : award.approved === "是" ? "approved" : "rejected";
   const statusText = award.approved === "否" ? "待审批" : award.approved === "是" ? "已通过" : "已驳回";
 
-  async function act(action) {
+  async function act(action, payload) {
     setBusy(true);
     setError("");
     try {
       if (action === "approve") {
         await approveAward(award.id, token, { category, points: parseFloat(points) || 0 });
       } else if (action === "reject") {
-        await rejectAward(award.id, token);
+        await rejectAward(award.id, token, payload?.reason || "");
+      } else if (action === "edit") {
+        await editAward(award.id, { category, points: parseFloat(points) || 0, basis: basis.trim() }, token);
       } else if (action === "withdraw") {
         await withdrawAward(award.id, token);
       } else if (action === "delete") {
@@ -101,7 +109,7 @@ function AwardCard({ award, token, onRefresh, onPreview }) {
       <div className="award-body">
         <div className="award-field">
           <span>加分栏目</span>
-          <select value={category} onChange={(e) => setCategory(e.target.value)} disabled={!canEdit || award.approved !== "否"}>
+          <select value={category} onChange={(e) => setCategory(e.target.value)} disabled={!canEdit || (award.approved !== "否" && !isRejected)}>
             {CATEGORIES.map((c) => (
               <option key={c} value={c}>{c}</option>
             ))}
@@ -115,7 +123,7 @@ function AwardCard({ award, token, onRefresh, onPreview }) {
             min="0"
             value={points}
             onChange={(e) => setPoints(e.target.value)}
-            disabled={!canEdit || award.approved !== "否"}
+            disabled={!canEdit || (award.approved !== "否" && !isRejected)}
           />
         </div>
         <div className="award-field">
@@ -124,8 +132,18 @@ function AwardCard({ award, token, onRefresh, onPreview }) {
         </div>
         <div className="award-field wide">
           <span>加分依据</span>
-          <p>{award.basis || "（无）"}</p>
+          {isRejected && canEdit ? (
+            <textarea value={basis} onChange={(e) => setBasis(e.target.value)} rows={3} />
+          ) : (
+            <p>{award.basis || "（无）"}</p>
+          )}
         </div>
+        {isRejected && (
+          <div className="award-field wide">
+            <span>驳回理由</span>
+            <p className="reject-reason">{award.reject_reason || "（未填写）"}</p>
+          </div>
+        )}
         <div className="award-field wide">
           <span>证据文件</span>
           <div className="evidence-list">
@@ -149,18 +167,50 @@ function AwardCard({ award, token, onRefresh, onPreview }) {
           {award.approved === "否" && (
             <>
               <button className="btn small" disabled={busy} onClick={() => act("approve")}>通过</button>
-              <button className="btn small danger" disabled={busy} onClick={() => act("reject")}>驳回</button>
+              <button className="btn small danger" disabled={busy} onClick={() => setRejectOpen(true)}>驳回</button>
+            </>
+          )}
+          {isRejected && (
+            <>
+              <button className="btn small" disabled={busy} onClick={() => setEditOpen(true)}>编辑并重新提交</button>
             </>
           )}
           {award.approved === "是" && (
             <button className="btn small" disabled={busy} onClick={() => act("withdraw")}>撤回</button>
           )}
-          {award.approved === "驳回" && (
-            <button className="btn small" disabled={busy} onClick={() => act("withdraw")}>撤回</button>
-          )}
           <button className="btn small ghost" disabled={busy} onClick={() => setConfirmDel(true)}>删除</button>
         </div>
       )}
+
+      <Modal
+        open={rejectOpen}
+        title={`驳回申报（${award.sid} ${award.name}）`}
+        confirmText="确认驳回"
+        danger
+        confirmDisabled={!rejectReason.trim()}
+        onConfirm={() => { setRejectOpen(false); act("reject", { reason: rejectReason }); setRejectReason(""); }}
+        onCancel={() => { setRejectOpen(false); setRejectReason(""); }}
+      >
+        <label className="form-label">驳回理由 *（将展示给申报人，便于修改后重新提交）</label>
+        <textarea
+          className="assess-basis modal-textarea"
+          rows={3}
+          value={rejectReason}
+          onChange={(e) => setRejectReason(e.target.value)}
+          placeholder="例如：证据图片不清晰，请上传获奖证书原件后重新提交"
+        />
+      </Modal>
+
+      <Modal
+        open={editOpen}
+        title={`编辑并重新提交（${award.sid} ${award.name}）`}
+        message="保存后该申报将回到「待审批」状态，重新进入审批流程。"
+        confirmText="保存并重新提交"
+        confirmDisabled={!basis.trim()}
+        onConfirm={() => { setEditOpen(false); act("edit"); }}
+        onCancel={() => setEditOpen(false)}
+      />
+
       <Modal
         open={confirmDel}
         title="删除申报"
@@ -283,6 +333,7 @@ export default function App() {
   const [passInput, setPassInput] = useState("");
   const [passErr, setPassErr] = useState("");
   const [passWarn, setPassWarn] = useState("");
+  const [passAttach, setPassAttach] = useState([]); // 聊天待发送附件（图片/文件）
   const [manualOpen, setManualOpen] = useState(false);
   const [manualItem, setManualItem] = useState({ category: "德育", points: "1", basis: "" });
   const chatBoxRef = useRef(null);
@@ -696,6 +747,7 @@ export default function App() {
       setPassSess(data);
       setPassMsgs([]);
       setPassItems([]);
+      setPassAttach([]);
       setPassDone(false);
       setPassEnded(false);
       // 自动发送「开始」让 AI 提第一个问题（流式）
@@ -705,25 +757,37 @@ export default function App() {
     }
   }
 
-  // 快速回复：发送预设文本（如「没有」）
+  // 快速回复：发送预设文本（如「没有」）——不带附件
   async function handlePassQuick(text) {
     if (passBusy || passEnded || !passSess) return;
     setPassInput("");
     setPassMsgs((prev) => [...prev, { role: "user", text }]);
-    await sendPassMsg(passSess.session_id, text);
+    await sendPassMsg(passSess.session_id, text, []);
   }
 
   async function handlePassSend(e) {
     e.preventDefault();
-    if (passBusy || !passInput.trim()) return;
-    await handlePassQuick(passInput.trim());
+    if (passBusy || (!passInput.trim() && passAttach.length === 0)) return;
+    const text = passInput.trim();
+    const files = passAttach;
+    setPassInput("");
+    setPassAttach([]);
+    setPassMsgs((prev) => [...prev, { role: "user", text, files: files.map((f) => f.name) }]);
+    await sendPassMsg(passSess.session_id, text, files);
   }
 
-  async function sendPassMsg(sessionId, text) {
+  function onPassAttach(e) {
+    const files = Array.from(e.target.files || []).slice(0, 5);
+    if (!files.length) return;
+    setPassAttach((prev) => [...prev, ...files].slice(0, 5));
+    e.target.value = "";
+  }
+
+  async function sendPassMsg(sessionId, text, files = []) {
     setPassBusy(true);
     setPassErr("");
     try {
-      const res = await sendAssess(sessionId, text);
+      const res = await sendAssess(sessionId, text, files);
       if (!res.ok) {
         const err = await res.json().catch(() => ({}));
         throw new Error(err.detail || `请求失败（${res.status}）`);
@@ -1171,7 +1235,18 @@ export default function App() {
                               dangerouslySetInnerHTML={{ __html: renderMd((m.text || "…").split("==JSON==")[0]) }}
                             />
                           ) : (
-                            m.text || "…"
+                            <>
+                              <div>{m.text || "…"}</div>
+                              {m.files && m.files.length > 0 && (
+                                <div className="chat-files">
+                                  {m.files.map((fn) => (
+                                    <span key={fn} className={`file-chip ${isImage(fn) ? "is-img" : ""}`}>
+                                      {isImage(fn) ? "图片 " : "文件 "}{fn}
+                                    </span>
+                                  ))}
+                                </div>
+                              )}
+                            </>
                           )}
                         </div>
                       </div>
@@ -1210,15 +1285,29 @@ export default function App() {
                             ? "还有要补充的吗？（这是最后一次补充，发送后对话结束）"
                             : passEnded
                               ? "对话已结束"
-                              : "回答当前问题，如：我获得了蓝桥杯省级二等奖"
+                              : "回答当前问题，可附证书/奖状图片，如：我获得了蓝桥杯省级二等奖"
                       }
                       disabled={passBusy || passEnded || !passSess}
                     />
+                    <label className="btn small ghost chat-attach-btn" title="上传图片/文件供 AI 识别">
+                      附件
+                      <input type="file" multiple hidden onChange={onPassAttach} disabled={passBusy || passEnded || !passSess} />
+                    </label>
                     <button
                       type="submit" className="btn small"
-                      disabled={passBusy || passEnded || !passInput.trim()}
+                      disabled={passBusy || passEnded || (!passInput.trim() && passAttach.length === 0)}
                     >{passDone && !passEnded ? "补充并结束" : "发送"}</button>
                   </form>
+                  {passAttach.length > 0 && (
+                    <div className="chat-attach-preview">
+                      {passAttach.map((f, fi) => (
+                        <span key={fi} className="file-chip">
+                          {f.name}
+                          <button type="button" className="chip-x" onClick={() => setPassAttach((prev) => prev.filter((_, i) => i !== fi))}>×</button>
+                        </span>
+                      ))}
+                    </div>
+                  )}
 
                   {passItems.length === 0 && (
                     <div className="assess-items edit">

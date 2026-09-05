@@ -235,10 +235,19 @@ export function approveAward(id, token, payload = {}) {
   });
 }
 
-export function rejectAward(id, token) {
+export function rejectAward(id, token, reason = "") {
   return request(`/awards/${id}/reject`, {
     method: "POST",
-    headers: { Authorization: `Bearer ${token}` }
+    headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+    body: JSON.stringify({ reason })
+  });
+}
+
+export function editAward(id, payload, token) {
+  return request(`/awards/${id}/edit`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+    body: JSON.stringify(payload)
   });
 }
 
@@ -266,12 +275,14 @@ export function startAssess(sid) {
   return request("/assess/start", { method: "POST", body: form });
 }
 
-// 发送一轮消息，返回可读流（text/event-stream）
-export function sendAssess(sessionId, text) {
+// 发送一轮消息（可附带文件/图片，multipart），返回可读流（text/event-stream）
+export function sendAssess(sessionId, text, files = []) {
+  const form = new FormData();
+  form.append("text", text);
+  files.forEach((f) => form.append("files", f));
   return fetch(`${API}/assess/${sessionId}/message`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ text })
+    body: form
   });
 }
 
