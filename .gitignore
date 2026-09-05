@@ -1,0 +1,34 @@
+# Python
+backend/.venv/
+__pycache__/
+*.pyc
+backend/server.log
+
+# Node
+frontend/node_modules/
+frontend/dist/
+
+# Runtime data
+backend/data/
+
+# Secrets
+backend/db_config.json
+backend/ai_config.json
+*.env
+.env.*
+
+# 学生个人数据（含姓名/成绩，勿提交）
+Y3第二学期成绩导出.xlsx
+*.xlsx
+
+# 运维产物（证书等部署时单独生成/下发）
+anticlass-ca.crt
+*.crt
+*.key
+
+# 工具本地配置（含部署命令记录，勿提交）
+.commandcode/
+
+# OS
+Thumbs.db
+.DS_Store
