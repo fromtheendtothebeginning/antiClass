@@ -170,25 +170,26 @@ function AwardCard({ award, token, onRefresh, onPreview }) {
         </div>
       </div>
       {error && <div className="error">{error}</div>}
-      {canEdit && (
-        <div className="award-actions">
-          {award.approved === "否" && (
-            <>
-              <button className="btn small" disabled={busy} onClick={() => act("approve")}>通过</button>
-              <button className="btn small danger" disabled={busy} onClick={() => setRejectOpen(true)}>驳回</button>
-            </>
-          )}
-          {isRejected && (
-            <>
-              <button className="btn small" disabled={busy} onClick={() => setEditOpen(true)}>编辑并重新提交</button>
-            </>
-          )}
-          {award.approved === "是" && (
-            <button className="btn small" disabled={busy} onClick={() => act("withdraw")}>撤回</button>
-          )}
-          <button className="btn small ghost" disabled={busy} onClick={() => setConfirmDel(true)}>删除</button>
-        </div>
-      )}
+      <div className="award-actions">
+        {isRejected && (
+          // 驳回记录：任何人（申报人本人）可编辑后重新提交
+          <button className="btn small" disabled={busy} onClick={() => setEditOpen(true)}>编辑并重新提交</button>
+        )}
+        {canEdit && (
+          <>
+            {award.approved === "否" && (
+              <>
+                <button className="btn small" disabled={busy} onClick={() => act("approve")}>通过</button>
+                <button className="btn small danger" disabled={busy} onClick={() => setRejectOpen(true)}>驳回</button>
+              </>
+            )}
+            {award.approved === "是" && (
+              <button className="btn small" disabled={busy} onClick={() => act("withdraw")}>撤回</button>
+            )}
+            <button className="btn small ghost" disabled={busy} onClick={() => setConfirmDel(true)}>删除</button>
+          </>
+        )}
+      </div>
 
       <Modal
         open={rejectOpen}

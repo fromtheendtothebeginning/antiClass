@@ -1145,14 +1145,21 @@ async def edit_award(
     request: Request,
     authorization: str = Header(default=""),
 ):
-    """驳回后编辑重提：仅 approved=驳回 的记录允许修改栏目/分值/依据并可追加证据文件。
-    支持 multipart（category/points/basis/files[]）与 JSON 两种提交；新上传证据经
-    类型黑名单 + AI 内容审核（图片/文本）双重检查，违规拒收。"""
-    session = require_token(authorization)
+    """驳回后编辑重提：公开（申报人本人即可修改后重交），仅 approved=驳回 的记录允许
+    修改栏目/分值/依据并追加证据文件。支持 multipart（category/points/basis/files[]）
+    与 JSON 两种提交；新上传证据经类型黑名单 + AI 内容审核（图片/文本）双重检查，违规拒收。
+    服务端不校验登录——驳回状态本身就是"待本人修订"；带 token 时仍校验班级范围一致性。
+    """
+    ip = request.client.host if request and request.client else "unknown"
+    rate_limit(f"award_edit:{ip}", 10, 3600)
+    session = None
+    if (authorization or "").startswith("Bearer "):
+        session = require_token(authorization)
     record = db.get_award(aid)
     if not record:
         raise HTTPException(status_code=404, detail="申报不存在")
-    check_class_scope(session, record.get("class_id", ""))
+    if session and record.get("class_id"):
+        check_class_scope(session, record.get("class_id", ""))
     if record["approved"] != "驳回":
         raise HTTPException(status_code=400, detail="仅已驳回的申报可编辑后重提")
 
