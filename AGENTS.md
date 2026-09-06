@@ -55,7 +55,7 @@
 - `GET /api/export` → Excel(.xlsx，openpyxl 生成，13 列：排名,学号,姓名,课程数,总学分,平均学分绩点,德育,智育,体育,美育,劳育,附加分,综合测评成绩)
 - `POST /api/awards/analyze`（公开）multipart `sid`+`text`+`files[]` → `{"draft_id","sid","name","items":[{category,points,basis,evidence}]}`（AI 分类生成**草稿**，不直接入库；未配 AI/学号不存在/未识别出加分项返回 400）。stage1 AI 会为每个加分项输出 `images`（1 起始的图片编号列表），后端据此把证据图片**按加分项分配**；AI 未给 images 时回退全部图片，非图片文件每条都带。草稿存内存 `DRAFTS`（重启即失，上限 200 个）。
 - `POST /api/awards/manual`（公开，10 次/小时/IP）multipart `sid`+`category`+`points`+`basis`+`files[]` → `{"created":[...]}`（传统表单申报，不经 AI，直接生成待审批记录；basis 必填 ≤2000 字，分值按栏目封顶）。
-- `POST /api/awards/submit`（公开）`{"submissions":[{draft_id, items:[{category,points,basis,evidence}]}]}` → `{"created":[...]}`（本人审核草稿后提交，支持一键提交多份草稿；evidence 会按草稿校验白名单；提交后草稿删除）。
+- `POST /api/awards/submit`（公开）`{"submissions":[{draft_id, items:[{category,points,basis,evidence}]}]}` → `{"created":[...]}`（本人审核草稿后提交，支持一键提交多份草稿；evidence 会按草稿校验白名单；提交后草稿删除）。`POST /api/awards/drafts/{draft_id}/delete`（公开）删除未提交的 AI 分析草稿并清理其临时证据文件（30 次/10 分/IP）。
 - `GET /api/awards`（公开）→ `{"awards":[...]}`；`GET /api/awards/{id}/evidence/{file}`（公开）下载/预览证据；`POST /api/awards/{id}/approve` body 可带 `{points,category}`；`POST /api/awards/{id}/reject`；`POST /api/awards/{id}/withdraw`（撤回，撤销加分回待审批）；`POST /api/awards/{id}/delete`（删除，若已通过一并撤销加分）；`POST /api/awards/class-committee`（公开）`sid`+`role` 生成班委德育加分
 - 其余路径由 `frontend/dist` 静态托管（未构建返回 404）
 

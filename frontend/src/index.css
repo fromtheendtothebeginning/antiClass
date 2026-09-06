@@ -828,6 +828,12 @@ button {
   margin-bottom: 10px;
 }
 
+.draft-head-actions {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
 .draft-head h3 {
   font-size: 15px;
   margin: 0;

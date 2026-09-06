@@ -10,6 +10,7 @@ import {
   createClass,
   deleteAdmin,
   deleteAward,
+  deleteAwardDraft,
   deleteClass,
   editAward,
   evidenceUrl,
@@ -296,14 +297,18 @@ function AwardCard({ award, token, onRefresh, onPreview }) {
   );
 }
 
-function DraftCard({ draft, submitting, onChangeItem, onSubmit, onPreview }) {
+function DraftCard({ draft, submitting, onChangeItem, onSubmit, onPreview, onDelete }) {
+  const [confirmDel, setConfirmDel] = useState(false);
   return (
     <div className="draft-card">
       <div className="draft-head">
         <strong>{draft.sid} {draft.name} · AI 分类结果</strong>
-        <button className="btn small" disabled={submitting} onClick={() => onSubmit(draft)}>
-          提交此申报
-        </button>
+        <div className="draft-head-actions">
+          <button className="btn small ghost" disabled={submitting} onClick={() => setConfirmDel(true)}>删除</button>
+          <button className="btn small" disabled={submitting} onClick={() => onSubmit(draft)}>
+            提交此申报
+          </button>
+        </div>
       </div>
       <p className="hint">请本人核对以下加分项的栏目、分值与依据，可修改后提交。</p>
       {draft.items.map((it, idx) => (
@@ -347,9 +352,18 @@ function DraftCard({ draft, submitting, onChangeItem, onSubmit, onPreview }) {
                 </a>
               )
             )}
-          </div>
-        </div>
-      ))}
+           </div>
+         </div>
+       ))}
+      <Modal
+        open={confirmDel}
+        title="删除 AI 分析草稿"
+        message="确认删除这份草稿？其内容与已上传的证据将被移除，无法恢复。"
+        danger
+        confirmText="删除"
+        onConfirm={() => { setConfirmDel(false); onDelete(draft.draft_id); }}
+        onCancel={() => setConfirmDel(false)}
+      />
     </div>
   );
 }
@@ -1002,6 +1016,18 @@ export default function App() {
           : d
       )
     );
+  }
+
+  async function deleteDraft(draftId) {
+    setError("");
+    try {
+      await deleteAwardDraft(draftId);
+      setDrafts((prev) => prev.filter((d) => d.draft_id !== draftId));
+    } catch (err) {
+      // 后端草稿已过期（如重启丢失/已提交）时本地同步移除即可
+      setDrafts((prev) => prev.filter((d) => d.draft_id !== draftId));
+      setError(err.message);
+    }
   }
 
   function buildSubmission(d) {
@@ -1658,6 +1684,7 @@ export default function App() {
                         submitting={submitting}
                         onChangeItem={updateDraftItem}
                         onSubmit={submitDraft}
+                        onDelete={deleteDraft}
                         onPreview={(aid, f) => setPreview({ aid, file: f })}
                       />
                     ))}

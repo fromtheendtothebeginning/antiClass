@@ -185,6 +185,10 @@ export function submitAwards(submissions) {
   });
 }
 
+export function deleteAwardDraft(draftId) {
+  return request(`/awards/drafts/${draftId}/delete`, { method: "POST" });
+}
+
 export function manualAward(sid, category, points, basis, files) {
   const form = new FormData();
   form.append("sid", sid);

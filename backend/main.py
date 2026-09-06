@@ -874,6 +874,22 @@ def analyze_award(
     return {"draft_id": draft_id, "sid": stu["sid"], "name": stu["name"], "items": draft_items}
 
 
+@app.post("/api/awards/drafts/{draft_id}/delete")
+def delete_award_draft(draft_id: str, request: Request):
+    """删除未提交的 AI 分析草稿（公开）：仅限内存中存在的草稿，连带清理其临时证据文件。"""
+    ip = request.client.host if request.client else "unknown"
+    rate_limit(f"draft_delete:{ip}", 30, 600)
+    with DRAFTS_LOCK:
+        draft = DRAFTS.get(draft_id)
+        if not draft:
+            raise HTTPException(status_code=404, detail="草稿不存在或已提交")
+        folder = draft.get("folder", "")
+        DRAFTS.pop(draft_id, None)
+    if folder and not db.folder_in_use(folder):
+        shutil.rmtree(UPLOADS_DIR / folder, ignore_errors=True)
+    return {"ok": True}
+
+
 @app.post("/api/awards/submit")
 def submit_awards(request: Request, body: SubmitBody):
     ip = request.client.host if request.client else "unknown"
