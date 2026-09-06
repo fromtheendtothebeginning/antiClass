@@ -297,7 +297,7 @@ function AwardCard({ award, token, onRefresh, onPreview }) {
   );
 }
 
-function DraftCard({ draft, submitting, onChangeItem, onSubmit, onPreview, onDelete }) {
+function DraftCard({ draft, submitting, onChangeItem, onRemoveItem, onSubmit, onPreview, onDelete }) {
   const [confirmDel, setConfirmDel] = useState(false);
   return (
     <div className="draft-card">
@@ -310,7 +310,7 @@ function DraftCard({ draft, submitting, onChangeItem, onSubmit, onPreview, onDel
           </button>
         </div>
       </div>
-      <p className="hint">请本人核对以下加分项的栏目、分值与依据，可修改后提交。</p>
+      <p className="hint">请本人核对以下加分项的栏目、分值与依据，可修改、删除单条后提交。</p>
       {draft.items.map((it, idx) => (
         <div key={idx} className="result-item draft-item">
           <select value={it.category} onChange={(e) => onChangeItem(draft.draft_id, idx, { category: e.target.value })}>
@@ -333,6 +333,15 @@ function DraftCard({ draft, submitting, onChangeItem, onSubmit, onPreview, onDel
             placeholder="加分依据"
             onChange={(e) => onChangeItem(draft.draft_id, idx, { basis: e.target.value })}
           />
+          <button
+            type="button"
+            className="btn small danger draft-item-del"
+            title="删除该加分项"
+            disabled={submitting || draft.items.length <= 1}
+            onClick={() => onRemoveItem(draft.draft_id, idx)}
+          >
+            删
+          </button>
           {it.review && <p className="review-note">{it.review}</p>}
           <div className="evidence-list">
             {it.evidence.length === 0 && <em className="file-count">无证据</em>}
@@ -1018,6 +1027,16 @@ export default function App() {
     );
   }
 
+  function removeDraftItem(draftId, idx) {
+    setDrafts((prev) =>
+      prev.map((d) =>
+        d.draft_id === draftId
+          ? { ...d, items: d.items.filter((_, i) => i !== idx) }
+          : d
+      )
+    );
+  }
+
   async function deleteDraft(draftId) {
     setError("");
     try {
@@ -1683,6 +1702,7 @@ export default function App() {
                         draft={d}
                         submitting={submitting}
                         onChangeItem={updateDraftItem}
+                        onRemoveItem={removeDraftItem}
                         onSubmit={submitDraft}
                         onDelete={deleteDraft}
                         onPreview={(aid, f) => setPreview({ aid, file: f })}

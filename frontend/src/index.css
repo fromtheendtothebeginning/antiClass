@@ -875,6 +875,12 @@ button {
   min-width: 0;
 }
 
+.draft-item-del {
+  flex: 0 0 auto;
+  padding: 7px 12px !important;
+  line-height: 1;
+}
+
 .review-note {
   flex-basis: 100%;
   margin: 0;
