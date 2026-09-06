@@ -1716,13 +1716,13 @@ button {
 .modal-overlay {
   position: fixed;
   inset: 0;
-  z-index: 1000;
+  z-index: 9999;
   background: var(--overlay);
   backdrop-filter: blur(3px);
   display: flex;
-  align-items: flex-start;
+  align-items: center;
   justify-content: center;
-  padding: 14vh 16px 16px;
+  padding: 16px;
   overflow-y: auto;
   animation: fadeIn 0.2s ease;
 }
@@ -1735,6 +1735,7 @@ button {
   max-width: 400px;
   width: 90%;
   max-height: calc(100vh - 40px);
+  margin: auto;
   display: flex;
   flex-direction: column;
   animation: scaleIn 0.22s cubic-bezier(0.22, 1, 0.36, 1);
