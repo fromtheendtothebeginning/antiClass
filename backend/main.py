@@ -26,6 +26,7 @@ from ai import (
     get_prompts,
     is_configured,
     load_config,
+    moderate_content,
 )
 from ai_settings import PROVIDERS, SEARCH_PROVIDERS, list_models, mask_key, test_chat
 import assess
@@ -47,6 +48,14 @@ MAX_FILE_SIZE = 10 * 1024 * 1024
 MAX_FILES = 5
 MAX_TEXT_LEN = 2000
 TOKEN_TTL = 12 * 3600
+# 上传证据的危险类型黑名单：可执行/脚本/网页/Office 宏等一律拒收
+DANGEROUS_EXT = {
+    ".exe", ".dll", ".bat", ".cmd", ".com", ".msi", ".scr", ".pif",
+    ".sh", ".bash", ".ps1", ".vbs", ".js", ".jse", ".wsf", ".hta",
+    ".html", ".htm", ".svg", ".xml", ".php", ".asp", ".aspx", ".jsp", ".cgi",
+    ".jar", ".apk", ".py", ".rb", ".pl", ".php3", ".php5",
+    ".docm", ".xlsm", ".pptm", ".mht", ".mhtml",
+}
 EVIDENCE_MEDIA = {
     ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".png": "image/png",
     ".gif": "image/gif", ".webp": "image/webp", ".bmp": "image/bmp",
@@ -90,6 +99,12 @@ def rate_limit(key, limit, window):
 
 
 def save_upload(f, upload_dir):
+    suffix = Path(f.filename or "file").suffix.lower()
+    if suffix in DANGEROUS_EXT:
+        raise HTTPException(
+            status_code=400,
+            detail=f"文件 {f.filename} 类型不允许上传（{suffix}），请转换为图片/PDF/Word 等普通文档",
+        )
     name = f"{uuid.uuid4().hex}_{Path(f.filename or 'file').name}"
     target = upload_dir / name
     size = 0
@@ -1125,8 +1140,14 @@ def reject_award(aid: str, body: RejectBody = None, authorization: str = Header(
 
 
 @app.post("/api/awards/{aid}/edit")
-def edit_award(aid: str, body: EditAwardBody, authorization: str = Header(default="")):
-    """驳回后编辑：仅 approved=驳回 的记录允许修改栏目/分值/依据；保存后回到待审批重新走审批。"""
+async def edit_award(
+    aid: str,
+    request: Request,
+    authorization: str = Header(default=""),
+):
+    """驳回后编辑重提：仅 approved=驳回 的记录允许修改栏目/分值/依据并可追加证据文件。
+    支持 multipart（category/points/basis/files[]）与 JSON 两种提交；新上传证据经
+    类型黑名单 + AI 内容审核（图片/文本）双重检查，违规拒收。"""
     session = require_token(authorization)
     record = db.get_award(aid)
     if not record:
@@ -1134,16 +1155,90 @@ def edit_award(aid: str, body: EditAwardBody, authorization: str = Header(defaul
     check_class_scope(session, record.get("class_id", ""))
     if record["approved"] != "驳回":
         raise HTTPException(status_code=400, detail="仅已驳回的申报可编辑后重提")
-    category = body.category
+
+    ctype = (request.headers.get("content-type") or "").lower()
+    category = None
+    points = None
+    basis = None
+    new_files = []
+    if ctype.startswith("multipart/"):
+        form = await request.form()
+        category = (form.get("category") or "").strip()
+        try:
+            points = float(form.get("points") or 0)
+        except (TypeError, ValueError):
+            raise HTTPException(status_code=400, detail="加分分值无效")
+        basis = (form.get("basis") or "").strip()
+        new_files = form.getlist("files") if "files" in form else []
+    else:
+        body = await request.json()
+        if not isinstance(body, dict):
+            raise HTTPException(status_code=400, detail="请求格式错误")
+        category = (body.get("category") or "").strip()
+        try:
+            points = float(body.get("points") or 0)
+        except (TypeError, ValueError):
+            raise HTTPException(status_code=400, detail="加分分值无效")
+        basis = (body.get("basis") or "").strip()
+
     if category not in CATEGORY_FIELD:
         raise HTTPException(status_code=400, detail="加分栏目无效")
     cap = CATEGORY_CAP[category]
-    points = round(min(max(body.points, 0.0), cap), 1)
-    basis = (body.basis or "").strip()
+    points = round(min(max(points, 0.0), cap), 1)
     if not basis:
         raise HTTPException(status_code=400, detail="加分依据不能为空")
     basis = basis[:MAX_TEXT_LEN]
-    db.update_award(aid, category=category, points=points, basis=basis, approved="否", reject_reason="")
+
+    # 追加证据：先落盘临时目录 → 类型/内容审核 → 通过则移入证据文件夹
+    evidence = list(record.get("evidence") or [])
+    uploaded = []
+    folder = record.get("folder") or ""
+    file_list = [f for f in new_files if getattr(f, "filename", None)][:MAX_FILES]
+    if file_list:
+        if not folder:
+            folder = uuid.uuid4().hex
+        upload_dir = UPLOADS_DIR / folder
+        upload_dir.mkdir(parents=True, exist_ok=True)
+        tmp_dir = UPLOADS_DIR / ("edit_" + uuid.uuid4().hex)
+        tmp_dir.mkdir(parents=True, exist_ok=True)
+        try:
+            for f in file_list:
+                name = save_upload(f, tmp_dir)  # 危险扩展名在此被拒
+                uploaded.append(name)
+            # AI 内容审核：图片（识图）+ 文本类文件取前 2KB 内容
+            image_paths = [
+                str(tmp_dir / n) for n in uploaded
+                if Path(n).suffix.lower() in {".jpg", ".jpeg", ".png", ".gif", ".webp", ".bmp"}
+            ]
+            text_snips = []
+            for n in uploaded:
+                suf = Path(n).suffix.lower()
+                if suf in {".txt", ".md", ".csv", ".json", ".log", ".pdf", ".doc", ".docx", ".xls", ".xlsx", ".zip"}:
+                    try:
+                        data = (tmp_dir / n).read_bytes()[:4096]
+                        text_snips.append(f"[{n}] " + data.decode("utf-8", "ignore")[:2000])
+                    except OSError:
+                        pass
+            if image_paths or text_snips:
+                ok, reason = moderate_content(image_paths=image_paths, texts=text_snips)
+                if not ok:
+                    raise HTTPException(status_code=400, detail=f"文件内容审核未通过：{reason}")
+            # 通过 → 移入正式证据目录
+            for n in uploaded:
+                shutil.move(str(tmp_dir / n), str(upload_dir / n))
+            evidence = evidence + uploaded
+        except HTTPException:
+            shutil.rmtree(tmp_dir, ignore_errors=True)
+            raise
+        finally:
+            if tmp_dir.exists():
+                shutil.rmtree(tmp_dir, ignore_errors=True)
+
+    db.update_award(
+        aid,
+        category=category, points=points, basis=basis,
+        evidence=evidence, folder=folder, approved="否", reject_reason="",
+    )
     record = db.get_award(aid)
     return {"ok": True, "award": record}
 

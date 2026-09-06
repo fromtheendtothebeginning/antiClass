@@ -242,6 +242,28 @@ def _split_protocol(full):
     return full, {}
 
 
+def _body_is_zero_or_already_scored(body, sess):
+    """正文疑似判分但没有结构化 add 时，判断是否为「0 分判定」或「已加过分的重复说明」——
+    两者都是正常对话，不该提示「未能自动识别」。返回 True 表示应静默。"""
+    # 1. 判出的是 0 分：如"该项加 0 分/加分为0/得0分/不加分" → 静默
+    text = body.replace("*", "").replace(" ", "")
+    zero = re.search(r"(?:加|得|评|计|记)?0(?:\.0)?\s*分|分(?:为|是|：|:)?0(?:\.0)?(?:分)?|不加分|无加分", text)
+    if zero and not re.search(r"(?:加|得|评)[1-9]", text):
+        return True
+    # 2. 正文把该项判为"已加过/已通过/之前确认过" → 静默
+    if re.search(r"已(?:经)?(?:加过|通过|确认|上报|记录)(?:加分|该项|这项)?", body):
+        return True
+    # 3. 正文点名栏目与分值，而该生系统中已有同栏目同分值已通过记录（防重复语境）
+    existing = sess.get("existing") or []
+    for e in existing:
+        if e.get("approved") != "是":
+            continue
+        cat, pts = e.get("category", ""), e.get("points", 0)
+        if cat and cat in body and re.search(rf"{cat}[^。]{0,20}?{pts:g}\s*分", body):
+            return True
+    return False
+
+
 def run_turn(session_id, user_text, image_paths=None):
     """执行一轮问答，产出 SSE 事件 dict（delta/add/done）。
     支持本轮附带图片（image_paths：本地临时图片路径列表），随文字一起发给 AI 识别。
@@ -375,9 +397,14 @@ def run_turn(session_id, user_text, image_paths=None):
             "type": "warning",
             "text": "已跳过重复加分项：该栏目与分值在本会话或系统中已存在（已通过），不会重复加分。",
         }
-    elif not add_items and not done and SCORE_CLAIM_RE.search(body):
-        # 只有模型既没输出任何结构化加分项（JSON/正文兜底均空）、正文又疑似判分时才提示补录；
-        # 若 JSON 给了项但被重复/范围外规则过滤，不归咎"未能自动识别"（前者有重复提示，后者按规则静默）
+    elif (
+        not add_items
+        and not done
+        and SCORE_CLAIM_RE.search(body)
+        and not _body_is_zero_or_already_scored(body, sess)
+    ):
+        # 只有模型既没输出任何结构化加分项（JSON/正文兜底均空）、正文又疑似判出正分
+        # 且该判分不是 0 分/已在本会话或系统加过时才提示补录；0 分与重复判定属正常对话
         yield {
             "type": "warning",
             "text": "AI 的回复中出现了加分判定，但未能自动识别为加分项。请检查上一条回答，必要时使用下方「手动添加加分项」补录，或重答一次。",

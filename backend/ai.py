@@ -395,6 +395,62 @@ def image_part(path):
     return {"type": "image_url", "image_url": {"url": f"data:{mime};base64,{b64}"}}
 
 
+# 内容审核：上传证据的图片/文本用 AI 判定是否含违法内容；命中则拒收
+_MODERATION_SYSTEM = (
+    "你是文件内容审核员。审核上传的申报证据材料（图片或文本）是否包含以下违法/违规内容："
+    "①涉政敏感、分裂国家；②色情、性暗示；③暴力恐怖、血腥；④赌博、毒品；⑤诈骗、代写代考、作弊工具；"
+    "⑥宣扬危害国家安全与社会稳定的内容。"
+    "只输出一行 JSON：{\"ok\":true} 表示内容合规可接受；{\"ok\":false,\"reason\":\"一句话说明违规点\"} 表示违规。"
+    "普通获奖证书、奖状、成绩单、报名表、活动照片等一律判 ok=true；不要误伤正常申报材料。"
+)
+
+
+def moderate_content(image_paths=None, texts=None, cfg=None):
+    """AI 审核上传文件内容是否违法/违规。返回 (ok: bool, reason: str)。
+    - 未配置 AI：返回 (True, "")，由调用方决定是否放行
+    - 调用失败：同样返回 (True, "") 并附带不可用信息（安全策略=默认放行，配合类型黑名单兜底）
+    """
+    image_paths = image_paths or []
+    texts = texts or []
+    if not image_paths and not texts:
+        return True, ""
+    if cfg is None:
+        cfg = load_config()
+    if not cfg:
+        return True, ""
+    parts = []
+    if texts:
+        joined = "\n".join(str(t)[:500] for t in texts)
+        parts.append({"type": "text", "text": "【文本材料】\n" + joined})
+    for p in image_paths[:4]:
+        img = image_part(p)
+        if img:
+            parts.append(img)
+    payload = {
+        "model": cfg["model"],
+        "messages": [
+            {"role": "system", "content": _MODERATION_SYSTEM},
+            {"role": "user", "content": parts},
+        ],
+        "temperature": 0,
+        "max_tokens": 120,
+    }
+    try:
+        out = _chat(payload, cfg)
+    except Exception:
+        return True, ""
+    m = re.search(r"\{.*\}", out or "", re.S)
+    if not m:
+        return True, ""
+    try:
+        data = json.loads(m.group(0))
+    except json.JSONDecodeError:
+        return True, ""
+    if data.get("ok") is False:
+        return False, str(data.get("reason", "内容违规"))[:200]
+    return True, ""
+
+
 def _build_user_content(text, image_paths, extra=None):
     parts = []
     if extra:

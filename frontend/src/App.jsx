@@ -72,6 +72,7 @@ function AwardCard({ award, token, onRefresh, onPreview }) {
   const [rejectOpen, setRejectOpen] = useState(false);
   const [rejectReason, setRejectReason] = useState("");
   const [editOpen, setEditOpen] = useState(false);
+  const [editFiles, setEditFiles] = useState([]); // 编辑重提时追加的证据文件
   const canEdit = !!token;
   const isRejected = award.approved === "驳回";
   const statusClass = award.approved === "否" ? "pending" : award.approved === "是" ? "approved" : "rejected";
@@ -86,7 +87,11 @@ function AwardCard({ award, token, onRefresh, onPreview }) {
       } else if (action === "reject") {
         await rejectAward(award.id, token, payload?.reason || "");
       } else if (action === "edit") {
-        await editAward(award.id, { category, points: parseFloat(points) || 0, basis: basis.trim() }, token);
+        await editAward(
+          award.id,
+          { category, points: parseFloat(points) || 0, basis: basis.trim(), files: editFiles },
+          token
+        );
       } else if (action === "withdraw") {
         await withdrawAward(award.id, token);
       } else if (action === "delete") {
@@ -204,12 +209,36 @@ function AwardCard({ award, token, onRefresh, onPreview }) {
       <Modal
         open={editOpen}
         title={`编辑并重新提交（${award.sid} ${award.name}）`}
-        message="保存后该申报将回到「待审批」状态，重新进入审批流程。"
         confirmText="保存并重新提交"
-        confirmDisabled={!basis.trim()}
-        onConfirm={() => { setEditOpen(false); act("edit"); }}
-        onCancel={() => setEditOpen(false)}
-      />
+        confirmDisabled={!basis.trim() || busy}
+        onConfirm={() => { setEditOpen(false); setEditFiles([]); act("edit"); }}
+        onCancel={() => { setEditOpen(false); setEditFiles([]); }}
+      >
+        <p className="modal-note">
+          保存后该申报将回到「待审批」状态，重新进入审批流程。可在此补充证据文件（图片/PDF/Word，禁止可执行或脚本类文件，内容将经自动审核）。
+        </p>
+        <label className="btn small ghost assess-file-btn" style={{ marginTop: 8 }}>
+          ＋ 添加证据文件
+          <input
+            type="file" multiple hidden
+            onChange={(e) => {
+              const fs = Array.from(e.target.files || []).slice(0, 5);
+              setEditFiles((prev) => [...prev, ...fs].slice(0, 5));
+              e.target.value = "";
+            }}
+          />
+        </label>
+        {editFiles.length > 0 && (
+          <div className="chat-attach-preview">
+            {editFiles.map((f, fi) => (
+              <span key={fi} className="file-chip">
+                {f.name}
+                <button type="button" className="chip-x" onClick={() => setEditFiles((prev) => prev.filter((_, i) => i !== fi))}>×</button>
+              </span>
+            ))}
+          </div>
+        )}
+      </Modal>
 
       <Modal
         open={confirmDel}

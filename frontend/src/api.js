@@ -244,10 +244,28 @@ export function rejectAward(id, token, reason = "") {
 }
 
 export function editAward(id, payload, token) {
+  const hasFiles = (payload.files || []).length > 0;
+  const body = {
+    category: payload.category,
+    points: payload.points,
+    basis: payload.basis
+  };
+  if (!hasFiles) {
+    return request(`/awards/${id}/edit`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+      body: JSON.stringify(body)
+    });
+  }
+  const form = new FormData();
+  form.append("category", body.category);
+  form.append("points", String(body.points));
+  form.append("basis", body.basis);
+  payload.files.forEach((f) => form.append("files", f));
   return request(`/awards/${id}/edit`, {
     method: "POST",
-    headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
-    body: JSON.stringify(payload)
+    headers: { Authorization: `Bearer ${token}` },
+    body: form
   });
 }
 
