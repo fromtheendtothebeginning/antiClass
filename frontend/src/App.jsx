@@ -336,8 +336,8 @@ function DraftCard({ draft, submitting, onChangeItem, onRemoveItem, onSubmit, on
           <button
             type="button"
             className="btn small danger draft-item-del"
-            title="删除该加分项"
-            disabled={submitting || draft.items.length <= 1}
+            title="删除该加分项（删空自动移除整份草稿）"
+            disabled={submitting}
             onClick={() => onRemoveItem(draft.draft_id, idx)}
           >
             删
@@ -1028,13 +1028,22 @@ export default function App() {
   }
 
   function removeDraftItem(draftId, idx) {
+    let removedAll = false;
     setDrafts((prev) =>
-      prev.map((d) =>
-        d.draft_id === draftId
-          ? { ...d, items: d.items.filter((_, i) => i !== idx) }
-          : d
-      )
+      prev.map((d) => {
+        if (d.draft_id !== draftId) return d;
+        const items = d.items.filter((_, i) => i !== idx);
+        if (items.length === 0) {
+          removedAll = true;
+          return null; // 最后一条被删 → 整卡移除
+        }
+        return { ...d, items };
+      }).filter(Boolean)
     );
+    if (removedAll) {
+      // 异步清理后端草稿与证据文件（本地已移除，失败不阻塞）
+      deleteAwardDraft(draftId).catch(() => {});
+    }
   }
 
   async function deleteDraft(draftId) {
