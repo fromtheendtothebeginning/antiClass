@@ -1,4 +1,5 @@
 import { useEffect } from "react";
+import { createPortal } from "react-dom";
 
 function Modal({
   open,
@@ -31,7 +32,7 @@ function Modal({
 
   if (!open) return null;
 
-  return (
+  return createPortal(
     <div className="modal-overlay" role="dialog" aria-modal="true">
       <div className="modal-sheet" onClick={(e) => e.stopPropagation()}>
         <h3>{title}</h3>
@@ -55,7 +56,8 @@ function Modal({
           </div>
         )}
       </div>
-    </div>
+    </div>,
+    document.body
   );
 }
 
