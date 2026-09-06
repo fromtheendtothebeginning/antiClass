@@ -78,6 +78,13 @@ function AwardCard({ award, token, onRefresh, onPreview }) {
   const statusClass = award.approved === "否" ? "pending" : award.approved === "是" ? "approved" : "rejected";
   const statusText = award.approved === "否" ? "待审批" : award.approved === "是" ? "已通过" : "已驳回";
 
+  // 数据刷新（act 后 onRefresh 传入新 award）时同步本地字段
+  useEffect(() => {
+    setCategory(award.category);
+    setPoints(String(award.points));
+    setBasis(award.basis || "");
+  }, [award.id, award.category, award.points, award.basis]);
+
   async function act(action, payload) {
     setBusy(true);
     setError("");
@@ -114,7 +121,7 @@ function AwardCard({ award, token, onRefresh, onPreview }) {
       <div className="award-body">
         <div className="award-field">
           <span>加分栏目</span>
-          <select value={category} onChange={(e) => setCategory(e.target.value)} disabled={!canEdit || (award.approved !== "否" && !isRejected)}>
+          <select value={category} onChange={(e) => setCategory(e.target.value)} disabled={!canEdit || award.approved !== "否"}>
             {CATEGORIES.map((c) => (
               <option key={c} value={c}>{c}</option>
             ))}
@@ -128,7 +135,7 @@ function AwardCard({ award, token, onRefresh, onPreview }) {
             min="0"
             value={points}
             onChange={(e) => setPoints(e.target.value)}
-            disabled={!canEdit || (award.approved !== "否" && !isRejected)}
+            disabled={!canEdit || award.approved !== "否"}
           />
         </div>
         <div className="award-field">
@@ -137,11 +144,7 @@ function AwardCard({ award, token, onRefresh, onPreview }) {
         </div>
         <div className="award-field wide">
           <span>加分依据</span>
-          {isRejected && canEdit ? (
-            <textarea value={basis} onChange={(e) => setBasis(e.target.value)} rows={3} />
-          ) : (
-            <p>{award.basis || "（无）"}</p>
-          )}
+          <p>{award.basis || "（无）"}</p>
         </div>
         {isRejected && (
           <div className="award-field wide">
@@ -215,8 +218,47 @@ function AwardCard({ award, token, onRefresh, onPreview }) {
         onCancel={() => { setEditOpen(false); setEditFiles([]); }}
       >
         <p className="modal-note">
-          保存后该申报将回到「待审批」状态，重新进入审批流程。可在此补充证据文件（图片/PDF/Word，禁止可执行或脚本类文件，内容将经自动审核）。
+          被驳回的申报可在此修改栏目/分值/依据，并可补充证据文件（图片/PDF/Word）。保存后回到「待审批」重新审批，内容将经自动审核。
         </p>
+        <div className="award-field">
+          <span>加分栏目</span>
+          <select value={category} onChange={(e) => setCategory(e.target.value)}>
+            {CATEGORIES.map((c) => (
+              <option key={c} value={c}>{c}</option>
+            ))}
+          </select>
+        </div>
+        <div className="award-field">
+          <span>加分分值</span>
+          <input
+            type="number"
+            step="0.5"
+            min="0"
+            max={category === "附加分" ? 5 : 100}
+            value={points}
+            onChange={(e) => setPoints(e.target.value)}
+          />
+        </div>
+        <div className="award-field wide">
+          <span>加分依据</span>
+          <textarea value={basis} onChange={(e) => setBasis(e.target.value)} rows={3} />
+        </div>
+        {award.evidence.length > 0 && (
+          <div className="award-field wide">
+            <span>已有证据（点击可放大预览）</span>
+            <div className="evidence-list">
+              {award.evidence.map((f) =>
+                isImage(f) ? (
+                  <div key={f} className="evidence-img">
+                    <img src={evidenceUrl(award.id, f)} alt={f} loading="lazy" onClick={() => onPreview(award.id, f)} title="点击放大预览" />
+                  </div>
+                ) : (
+                  <a key={f} className="link" href={evidenceUrl(award.id, f)} target="_blank" rel="noreferrer">查看 {f}</a>
+                )
+              )}
+            </div>
+          </div>
+        )}
         <label className="btn small ghost assess-file-btn" style={{ marginTop: 8 }}>
           ＋ 添加证据文件
           <input
