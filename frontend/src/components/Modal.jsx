@@ -20,13 +20,19 @@ function Modal({
       if (e.key === "Escape" && onCancel) onCancel();
     };
     window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
+    // 弹窗打开期间锁定背景滚动，禁止操作弹窗外的页面
+    const prevOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => {
+      window.removeEventListener("keydown", onKey);
+      document.body.style.overflow = prevOverflow;
+    };
   }, [open, onCancel]);
 
   if (!open) return null;
 
   return (
-    <div className="modal-overlay" onClick={onCancel}>
+    <div className="modal-overlay" role="dialog" aria-modal="true">
       <div className="modal-sheet" onClick={(e) => e.stopPropagation()}>
         <h3>{title}</h3>
         {children != null ? <div className="modal-body">{children}</div> : <p>{message}</p>}

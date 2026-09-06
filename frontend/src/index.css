@@ -1732,6 +1732,9 @@ button {
   padding: 24px 28px 28px;
   max-width: 400px;
   width: 90%;
+  max-height: calc(100vh - 40px);
+  display: flex;
+  flex-direction: column;
   animation: scaleIn 0.22s cubic-bezier(0.22, 1, 0.36, 1);
   box-shadow: 0 12px 40px rgba(0, 0, 0, 0.2);
 }
@@ -1739,6 +1742,7 @@ button {
 .modal-sheet h3 {
   margin: 0 0 8px;
   font-size: 18px;
+  flex: none;
 }
 
 .modal-sheet p {
@@ -1753,11 +1757,14 @@ button {
   display: flex;
   flex-direction: column;
   gap: 12px;
+  overflow-y: auto;
+  min-height: 0;
 }
 
 .modal-actions {
   display: flex;
   gap: 12px;
+  flex: none;
 }
 
 .modal-actions .btn,
