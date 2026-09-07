@@ -664,6 +664,22 @@ button {
   color: #ea580c;
 }
 
+/* 挂科（无参评资格）：沉底灰显，总分 -1 */
+.board tbody tr.disq {
+  opacity: 0.65;
+  background: var(--bg-elevated);
+}
+
+.board tbody tr.disq:hover {
+  background: var(--bg-elevated);
+}
+
+.board tbody tr.disq .rank,
+.board tbody tr.disq .total {
+  color: var(--text-muted);
+  font-weight: 600;
+}
+
 .empty {
   color: var(--text-muted);
   padding: 40px !important;

@@ -38,7 +38,7 @@ def _load_db_config():
 DB_CONFIG = {**_load_db_config(), "charset": "utf8mb4"}
 DB_NAME = os.environ.get("MYSQL_DB", "scholarship")
 
-STUDENT_FIELDS = ("sid", "name", "class_id", "course_count", "credits", "gpa", "deyu", "score", "tiyu", "meiyu", "laoyu", "fujia", "total")
+STUDENT_FIELDS = ("sid", "name", "class_id", "course_count", "credits", "gpa", "deyu", "score", "tiyu", "meiyu", "laoyu", "fujia", "failed", "total")
 AWARD_FIELDS = ("id", "sid", "name", "class_id", "category", "points", "basis", "evidence", "folder", "approved", "reject_reason", "created_at")
 ADMIN_FIELDS = ("username", "role", "class_id", "created_at")
 
@@ -55,6 +55,7 @@ CREATE TABLE IF NOT EXISTS students (
     meiyu DECIMAL(7,2) NOT NULL DEFAULT 0,
     laoyu DECIMAL(7,2) NOT NULL DEFAULT 0,
     fujia DECIMAL(6,2) NOT NULL DEFAULT 0,
+    failed TINYINT(1) NOT NULL DEFAULT 0,
     total DECIMAL(9,2) NOT NULL DEFAULT 0
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
@@ -145,6 +146,7 @@ def init_db():
                 cur.execute(stmt)
         for table, column, ddl in (
             ("students", "class_id", "class_id CHAR(32) NOT NULL DEFAULT ''"),
+            ("students", "failed", "failed TINYINT(1) NOT NULL DEFAULT 0"),
             ("awards", "class_id", "class_id CHAR(32) NOT NULL DEFAULT ''"),
             ("awards", "reject_reason", "reject_reason VARCHAR(500) NOT NULL DEFAULT ''"),
         ):
@@ -173,7 +175,9 @@ def _plain(value):
 
 
 def _row_student(row):
-    return {k: _plain(row[k]) for k in STUDENT_FIELDS}
+    result = {k: _plain(row[k]) for k in STUDENT_FIELDS if k in row}
+    result.setdefault("failed", 0)
+    return result
 
 
 def _row_award(row):
@@ -216,10 +220,11 @@ def replace_students(students, class_id):
         cur.execute("DELETE FROM students WHERE class_id=%s", (class_id,))
         for s in students:
             cur.execute(
-                "INSERT INTO students (sid,name,class_id,course_count,credits,gpa,deyu,score,tiyu,meiyu,laoyu,fujia,total) "
-                "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
+                "INSERT INTO students (sid,name,class_id,course_count,credits,gpa,deyu,score,tiyu,meiyu,laoyu,fujia,failed,total) "
+                "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
                 tuple(
-                    class_id if f == "class_id" else s.get(f, 0)
+                    int(s["failed"]) if f == "failed"
+                    else (class_id if f == "class_id" else s.get(f, 0))
                     for f in STUDENT_FIELDS
                 ),
             )
@@ -249,6 +254,16 @@ def update_student_score(sid, class_id, field, value, total):
             f"UPDATE students SET `{field}`=%s, total=%s WHERE sid=%s AND class_id=%s",
             (round(float(value), 2), round(float(total), 2), sid, class_id),
         )
+
+
+def update_failed_flags(class_id, failed_map):
+    """按源数据重算 failed（参评资格）标记；只写 failed 列，不动分数与 total。"""
+    with tx() as cur:
+        for sid, failed in failed_map.items():
+            cur.execute(
+                "UPDATE students SET failed=%s WHERE sid=%s AND class_id=%s",
+                (1 if failed else 0, sid, class_id),
+            )
 
 
 # ---------- awards ----------

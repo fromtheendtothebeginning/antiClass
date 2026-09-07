@@ -12,12 +12,14 @@ import zipfile
 from collections import defaultdict, deque
 from datetime import datetime
 from pathlib import Path
+from urllib.parse import quote
 
 import uvicorn
 from fastapi import FastAPI, File, Form, Header, HTTPException, Request, UploadFile
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from openpyxl import Workbook, load_workbook
+from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 from pydantic import BaseModel
 
 from ai import (
@@ -233,6 +235,19 @@ def pick_best(course_rows):
     return max(course_rows, key=lambda r: (EXAM_PRIORITY.get(r[18], 1), to_float(r[3])))
 
 
+def _first_exam_score(course_rows):
+    """按办法「第一次考试」口径取课程成绩：优先正常考试（取其中最高），
+    无正常考试记录才降级取 重修>补考一 的优先级最高记录；旷考按 0 分。"""
+    normals = [r for r in course_rows if r[18] == "正常考试"]
+    if normals:
+        return max(to_float(r[3]) for r in normals)
+    best = pick_best(course_rows)
+    score = to_float(best[3])
+    if best[17] == "旷考":
+        score = 0.0
+    return score
+
+
 def compute_students(rows):
     groups = {}
     sports = {}
@@ -256,12 +271,15 @@ def compute_students(rows):
         credits = to_float(best[16])
         stu = students.setdefault(
             sid,
-            {"sid": sid, "name": names[sid], "course_count": 0, "credits": 0.0, "score_weight": 0.0, "gpa_weight": 0.0, "tiyu_total": 0.0, "tiyu_count": 0},
+            {"sid": sid, "name": names[sid], "course_count": 0, "credits": 0.0, "score_weight": 0.0, "gpa_weight": 0.0, "tiyu_total": 0.0, "tiyu_count": 0, "failed": False},
         )
         stu["course_count"] += 1
         stu["credits"] += credits
         stu["score_weight"] += score * credits
         stu["gpa_weight"] += to_float(best[19]) * credits
+        # 参评资格：当学期课程（不含通识课/体育课）第一次考试无不及格；任一 <60 即挂科
+        if _first_exam_score(course_rows) < 60:
+            stu["failed"] = True
 
     for (sid, course_code), sport_rows in sports.items():
         best = pick_best(sport_rows)
@@ -292,6 +310,7 @@ def compute_students(rows):
                 "meiyu": meiyu,
                 "laoyu": laoyu,
                 "fujia": fujia,
+                "failed": stu["failed"],
                 "total": calc_total(deyu, zhiyu, tiyu, meiyu, laoyu, fujia),
             }
         )
@@ -968,7 +987,15 @@ def leaderboard(class_id: str | None = None):
         cls = db.get_class(class_id)
         if cls:
             meta = {"rows": cls["row_count"], "source": cls["source"]}
-    return {"students": students, "meta": meta}
+    # 挂科（无参评资格）学生沉底且不占名次：rank 置 0，综合测评成绩列显示 -1
+    ranked = [s for s in students if not s.get("failed")]
+    disq = [s for s in students if s.get("failed")]
+    for rank, s in enumerate(ranked, start=1):
+        s["rank"] = rank
+    for s in disq:
+        s["rank"] = 0
+        s["total"] = -1
+    return {"students": ranked + disq, "meta": meta}
 
 
 @app.post("/api/scores/adjust")
@@ -1033,28 +1060,73 @@ def adjust_scores(body: AdjustBody, authorization: str = Header(default="")):
 def export(class_id: str | None = None):
     wb = Workbook()
     ws = wb.active
-    ws.title = "榜单"
-    ws.append(["学号", "姓名", "德育", "智育", "体育", "美育", "劳育", "综合测评成绩"])
+    ws.title = "Sheet1"
+    headers = ["学号", "姓名", "德*15%", "智*60%", "体*10%", "美*5%", "劳*10%", "附加", "总分"]
+
+    # 样式严格对齐附件「25-26下学期xx班综合测评总分.xlsx」：
+    # 等线 11 号（学号列仿宋）、全表细边框、学号列白色实底+文本格式、表头居中
+    thin = Side(style="thin")
+    border = Border(left=thin, right=thin, top=thin, bottom=thin)
+    font_body = Font(name="等线", size=11)
+    font_sid = Font(name="仿宋", size=11)
+    center = Alignment(horizontal="center", vertical="center")
+    header_font = Font(name="等线", size=11)
+
+    ws.append(headers)
+    for col in "ABCDEFGHI":
+        cell = ws[f"{col}1"]
+        cell.font = header_font
+        cell.alignment = center
+        cell.border = border
+    # 学号列表头也用仿宋（附件 A1 是仿宋）
+    ws["A1"].font = Font(name="仿宋", size=11)
+    ws["A1"].fill = PatternFill(fill_type="solid", start_color="FFFFFFFF", end_color="FFFFFFFF")
+    ws["A1"].number_format = "@"
+    ws["B1"].number_format = "@"
+
     for stu in db.list_students(class_id or None):
-        ws.append(
-            [
-                stu["sid"],
-                stu["name"],
-                stu["deyu"],
-                stu["score"],
-                stu["tiyu"],
-                stu["meiyu"],
-                stu["laoyu"],
-                stu["total"],
-            ]
-        )
+        total = -1 if stu.get("failed") else stu["total"]
+        row = [
+            str(stu["sid"]),
+            stu["name"],
+            stu["deyu"],
+            stu["score"],
+            stu["tiyu"],
+            stu["meiyu"],
+            stu["laoyu"],
+            stu["fujia"],
+            total,
+        ]
+        ws.append(row)
+        r = ws.max_row
+        for i, col in enumerate("ABCDEFGHI", start=1):
+            cell = ws.cell(row=r, column=i)
+            cell.border = border
+            cell.font = font_sid if col == "A" else font_body
+            if col in ("A", "B"):
+                # 学号/姓名：文本格式（附件 A、B 列均为 @），学号列附白色实底
+                cell.number_format = "@"
+                cell.alignment = Alignment(horizontal="center", vertical="center")
+                if col == "A":
+                    cell.fill = PatternFill(fill_type="solid", start_color="FFFFFFFF", end_color="FFFFFFFF")
+            elif i == 2:
+                cell.alignment = Alignment(horizontal="center", vertical="center")
+            else:
+                cell.alignment = Alignment(vertical="center")
+
+    # 表头行高 + 列宽（附件值）
+    ws.row_dimensions[1].height = 24.85
+    for col, width in zip("ABC", (8.71, 8.71, 8.71)):
+        ws.column_dimensions[col].width = width
+    for col in "DEFGHI":
+        ws.column_dimensions[col].width = 13
     buf = io.BytesIO()
     wb.save(buf)
     buf.seek(0)
     return StreamingResponse(
         buf,
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        headers={"Content-Disposition": "attachment; filename=leaderboard.xlsx"},
+        headers={"Content-Disposition": "attachment; filename*=UTF-8''" + quote("综合测评总分.xlsx")},
     )
 
 
@@ -1851,6 +1923,13 @@ if not db.list_students() and DEFAULT_XLSX.exists():
     students, rows = parse_xlsx(DEFAULT_XLSX)
     db.replace_students(students, FIRST_CLASS)
     db.set_class_meta(FIRST_CLASS, rows, DEFAULT_XLSX.name)
+elif DEFAULT_XLSX.exists():
+    # 已存在学生数据：仅按源文件重算参评资格 failed 标记（不动分数/调分/附加分）
+    try:
+        students, _ = parse_xlsx(DEFAULT_XLSX)
+        db.update_failed_flags(FIRST_CLASS, {s["sid"]: s["failed"] for s in students})
+    except HTTPException:
+        pass
 
 if DIST_DIR.exists():
     app.mount("/", StaticFiles(directory=str(DIST_DIR), html=True), name="frontend")

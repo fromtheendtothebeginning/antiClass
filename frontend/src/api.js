@@ -171,7 +171,7 @@ export async function exportExcel(classId) {
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
   a.href = url;
-  a.download = "leaderboard.xlsx";
+  a.download = "综合测评总分.xlsx";
   a.rel = "noopener";
   document.body.appendChild(a);
   a.click();

@@ -1709,8 +1709,12 @@ export default function App() {
                   </thead>
                   <tbody>
                     {students.map((s) => (
-                      <tr key={s.sid} style={{ "--i": s.rank - 1 }} className={s.rank <= 3 ? `top top-${s.rank}` : ""}>
-                        <td className="rank">{s.rank}</td>
+                      <tr
+                        key={s.sid}
+                        style={{ "--i": Math.max(s.rank - 1, 0) }}
+                        className={`${s.rank > 0 && s.rank <= 3 ? `top top-${s.rank}` : ""}${s.rank === 0 ? " disq" : ""}`}
+                      >
+                        <td className="rank">{s.rank > 0 ? s.rank : "无资格"}</td>
                         <td>{s.sid}</td>
                         <td className="name">{s.name}</td>
                         <td>{s.deyu.toFixed(1)}</td>
