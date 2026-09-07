@@ -131,6 +131,7 @@ def start(sid, name, class_id):
             "sid": sid,
             "name": name,
             "class_id": class_id,
+            "folder": "",  # 会话证据目录（main.py 首次上传文件时创建并回填，uploads/{folder}）
             "created": time.time(),
             "updated": time.time(),
             "messages": [],

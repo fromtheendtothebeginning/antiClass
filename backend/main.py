@@ -416,6 +416,74 @@ def assess_start(sid: str = Form(...), request: Request = None):
     }
 
 
+def _assess_classify_items(sess, text, image_paths, saved_names, upload_dir):
+    """一遍过对话传图后：调智能分类识别加分项，映射本轮图片为证据，去重后返回新增项。
+
+    返回 list[dict]：{category, points, basis, evidence:[文件名]}（evidence 是已落盘在会话 folder 的文件名）。
+    AI 未配置 / classify 失败 / 未识别出有效项 → 返回 []，不阻塞对话。
+    """
+    if not saved_names or not is_configured():
+        return []
+    items = classify(text, image_paths)
+    if not items:
+        return []
+    image_names = [
+        n for n in saved_names
+        if Path(n).suffix.lower() in {".jpg", ".jpeg", ".png", ".gif", ".webp", ".bmp"}
+    ]
+    other_names = [n for n in saved_names if n not in image_names]
+    sess_items = sess.get("items") or []
+    existing = sess.get("existing") or []
+    out = []
+    for it in items:
+        category = str(it.get("category", "")).strip()
+        if category not in CATEGORY_FIELD:
+            continue
+        try:
+            points = float(it.get("points", 0))
+        except (TypeError, ValueError):
+            points = 0.0
+        cap = CATEGORY_CAP[category]
+        points = round(max(0.0, min(points, cap)), 1)
+        basis = str(it.get("basis", "")).strip()
+        if not basis:
+            continue
+        # 证据映射：AI 给出 images 编号则按编号取本轮图片，否则全部图片；非图片一律带上
+        if isinstance(it.get("images"), list):
+            files = []
+            for i in it["images"]:
+                if isinstance(i, int) and 1 <= i <= len(image_names) and image_names[i - 1] not in files:
+                    files.append(image_names[i - 1])
+        else:
+            files = list(image_names)
+        files += [n for n in other_names if n not in files]
+        if not files:
+            continue  # 本轮无图可作证据则跳过（纯文字分类不在此路径）
+        # 去重：栏目+分值+依据与会话内已确认项一致，或与系统已通过项冲突 → 跳过（保留先来）
+        dup = any(
+            i["category"] == category and i["points"] == points and i["basis"] == basis
+            for i in sess_items
+        ) or any(
+            e["category"] == category and e["points"] == points
+            for e in existing
+            if e.get("approved") == "是"
+        )
+        if dup:
+            continue
+        with assess._LOCK:
+            sess["items"].append({"category": category, "points": points, "basis": basis})
+        out.append(
+            {
+                "category": category,
+                "points": points,
+                "basis": basis,
+                "evidence": files,
+                "auto": True,
+            }
+        )
+    return out
+
+
 @app.post("/api/assess/{session_id}/message")
 async def assess_message(session_id: str, request: Request):
     ip = request.client.host if request.client else "unknown"
@@ -440,26 +508,44 @@ async def assess_message(session_id: str, request: Request):
         raise HTTPException(status_code=400, detail="请输入内容")
 
     image_paths = []
-    temp_dir = None
+    upload_dir = None
+    saved_names = []
     file_list = [f for f in files if getattr(f, "filename", None)][:MAX_FILES]
     if file_list:
-        temp_dir = UPLOADS_DIR / ("assess_" + uuid.uuid4().hex)
-        temp_dir.mkdir(parents=True, exist_ok=True)
+        # 会话证据目录：首次上传时创建并回填 session["folder"]，之后复用（不随流删除）
+        folder = session.get("folder") or ""
+        if not folder:
+            folder = uuid.uuid4().hex
+            session["folder"] = folder
+        upload_dir = UPLOADS_DIR / folder
+        upload_dir.mkdir(parents=True, exist_ok=True)
         try:
             for f in file_list:
-                name = save_upload(f, temp_dir)
+                name = save_upload(f, upload_dir)
+                saved_names.append(name)
                 if Path(f.filename).suffix.lower() in {".jpg", ".jpeg", ".png", ".gif", ".webp", ".bmp"}:
-                    image_paths.append(str(temp_dir / name))
+                    image_paths.append(str(upload_dir / name))
         except HTTPException:
-            shutil.rmtree(temp_dir, ignore_errors=True)
+            # 保存失败：若会话 folder 为本轮新建且无任何已存文件，清理该目录
+            if folder and not saved_names and not (UPLOADS_DIR / folder).iterdir():
+                shutil.rmtree(UPLOADS_DIR / folder, ignore_errors=True)
+                session["folder"] = ""
             raise
 
     def _gen():
         try:
             yield from assess.run_turn(session_id, text, image_paths or None)
+            # 本轮有图片 → 走智能分类识图定分，识别出的加分项带证据自动汇入（SSE auto_items）
+            if image_paths:
+                try:
+                    auto = _assess_classify_items(session, text, image_paths, saved_names, upload_dir)
+                except Exception:
+                    auto = []
+                for it in auto:
+                    yield {"type": "auto_items", "items": [it]}
         finally:
-            if temp_dir:
-                shutil.rmtree(temp_dir, ignore_errors=True)
+            # 会话目录持久保留（供提交作证据）；不在此删除
+            pass
 
     return StreamingResponse(
         _sse(_gen()),
@@ -496,7 +582,7 @@ async def assess_submit(session_id: str, request: Request):
     if not isinstance(raw_items, list) or not raw_items:
         raise HTTPException(status_code=400, detail="尚未确认任何加分项")
 
-    # 校验并规范化加分项
+    # 校验并规范化加分项（保留前端回传的服务端已存证据文件名）
     cleaned = []
     for it in raw_items[:30]:
         if not isinstance(it, dict):
@@ -513,34 +599,60 @@ async def assess_submit(session_id: str, request: Request):
         basis = str(it.get("basis", "")).strip()[:MAX_TEXT_LEN]
         if not basis:
             continue
-        cleaned.append({"category": category, "points": points, "basis": basis})
+        cleaned.append(
+            {
+                "category": category,
+                "points": points,
+                "basis": basis,
+                "ev_server": [str(x) for x in (it.get("evidence") or []) if isinstance(x, str)],
+            }
+        )
     if not cleaned:
         raise HTTPException(status_code=400, detail="加分项内容无效")
 
-    # 证据：按加分项编号上传（字段 file_0..file_n，可多文件）
+    # 会话 folder（自动分类存的服务端证据所在目录）；提交后若无引用则清理
+    sess_folder = sess.get("folder") or ""
+    sess_dir = UPLOADS_DIR / sess_folder if sess_folder else None
+    if sess_dir and not sess_dir.is_dir():
+        sess_dir = None
+
+    # 证据：每项 = 会话已存证据(白名单) + 按加分项编号新上传(file_0..file_n)
     upload_dir = None
     evidence_by_index = [[] for _ in cleaned]
-    has_files = False
     for i in range(len(cleaned)):
+        evs = []
+        # ① 会话中智能分类已存的服务端证据（校验确在该会话 folder 内）
+        for name in cleaned[i]["ev_server"]:
+            if sess_dir:
+                p = (sess_dir / name).resolve()
+                if p.is_relative_to(sess_dir.resolve()) and p.is_file():
+                    evs.append(name)
+        # ② 手动补传的证据文件（字段 file_{i}，可多文件）
         files = form.getlist(f"file_{i}")
-        if not files:
-            continue
-        if upload_dir is None:
-            folder = uuid.uuid4().hex
-            upload_dir = UPLOADS_DIR / folder
-            upload_dir.mkdir(parents=True, exist_ok=True)
-        try:
-            for f in files[:MAX_FILES]:
-                evidence_by_index[i].append(save_upload(f, upload_dir))
-            has_files = True
-        except HTTPException:
-            if upload_dir:
-                shutil.rmtree(upload_dir, ignore_errors=True)
-            raise
+        if files:
+            if upload_dir is None:
+                # 无会话目录时新建；有会话目录则直接存进会话目录，避免证据分散
+                if sess_dir:
+                    upload_dir = sess_dir
+                else:
+                    folder = uuid.uuid4().hex
+                    upload_dir = UPLOADS_DIR / folder
+                    upload_dir.mkdir(parents=True, exist_ok=True)
+            try:
+                for f in files[:MAX_FILES]:
+                    evs.append(save_upload(f, upload_dir))
+            except HTTPException:
+                if upload_dir and upload_dir != sess_dir and not list(upload_dir.iterdir()):
+                    shutil.rmtree(upload_dir, ignore_errors=True)
+                raise
+        evidence_by_index[i] = evs
 
     created = []
     now = datetime.now()
     for i, it in enumerate(cleaned):
+        folder_used = (sess_folder) if (sess_dir and evidence_by_index[i]) else ""
+        if not folder_used and upload_dir:
+            folder_used = upload_dir.name
         created.append(
             {
                 "id": uuid.uuid4().hex,
@@ -551,7 +663,7 @@ async def assess_submit(session_id: str, request: Request):
                 "points": it["points"],
                 "basis": it["basis"],
                 "evidence": evidence_by_index[i],
-                "folder": upload_dir.name if upload_dir else "",
+                "folder": folder_used,
                 "approved": "否",
                 "created_at": now,
             }
@@ -559,6 +671,11 @@ async def assess_submit(session_id: str, request: Request):
     db.insert_awards(created)
     for r in created:
         r["created_at"] = r["created_at"].isoformat(timespec="seconds")
+    # 清理：会话目录若无任何 award 引用（该轮证据全部未入库/被删），删除之
+    if sess_dir and sess_dir.is_dir():
+        used = any(r["folder"] == sess_folder for r in created)
+        if not used and not db.folder_in_use(sess_folder):
+            shutil.rmtree(sess_dir, ignore_errors=True)
     assess.drop(session_id)
     return {"created": created}
 

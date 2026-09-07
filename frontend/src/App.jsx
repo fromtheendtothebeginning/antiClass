@@ -438,6 +438,8 @@ export default function App() {
   const [passErr, setPassErr] = useState("");
   const [passWarn, setPassWarn] = useState("");
   const [passAttach, setPassAttach] = useState([]); // 聊天待发送附件（图片/文件）
+  const [passConfirmSubmit, setPassConfirmSubmit] = useState(false);
+  const [passNoEvItems, setPassNoEvItems] = useState([]);
   const [manualOpen, setManualOpen] = useState(false);
   const [manualItem, setManualItem] = useState({ category: "德育", points: "1", basis: "" });
   const chatBoxRef = useRef(null);
@@ -977,9 +979,29 @@ export default function App() {
                 return arr;
               });
             } else if (ev.type === "add" && ev.items) {
-              const added = ev.items.map((it) => ({ ...it, evidence: [] }));
+              const added = ev.items.map((it) => ({ ...it, evidence: [], evServer: [] }));
               setPassItems((prev) => [...prev, ...added]);
               setPassWarn("");
+            } else if (ev.type === "auto_items" && ev.items) {
+              // 智能分类识图自动识别：每项带服务端已存证据文件名
+              const auto = ev.items
+                .map((it) => ({
+                  category: it.category,
+                  points: parseFloat(it.points) || 0,
+                  basis: (it.basis || "").trim(),
+                  evidence: [],
+                  evServer: Array.isArray(it.evidence) ? it.evidence : [],
+                  auto: true
+                }))
+                .filter((it) => it.basis);
+              if (auto.length) {
+                setPassItems((prev) => {
+                  const known = new Set(prev.map((x) => `${x.category}|${x.points}|${x.basis}`));
+                  const fresh = auto.filter((x) => !known.has(`${x.category}|${x.points}|${x.basis}`));
+                  return fresh.length ? [...prev, ...fresh] : prev;
+                });
+                setPassWarn("");
+              }
             } else if (ev.type === "warning") {
               setPassWarn(ev.text || "AI 判定可能有加分项但未能自动识别。");
             } else if (ev.type === "error") {
@@ -1028,7 +1050,8 @@ export default function App() {
       category: manualItem.category,
       points: parseFloat(manualItem.points) || 0,
       basis: manualItem.basis.trim(),
-      evidence: []
+      evidence: [],
+      evServer: []
     };
     setPassItems((prev) => [...prev, it]);
     setManualItem({ category: "德育", points: "1", basis: "" });
@@ -1046,8 +1069,23 @@ export default function App() {
     setPassItems((prev) => prev.map((it, i) => (i === idx ? { ...it, evidence: it.evidence.filter((_, j) => j !== fi) } : it)));
   }
 
+  function removePassItemServerFile(idx, fi) {
+    setPassItems((prev) => prev.map((it, i) => (i === idx ? { ...it, evServer: (it.evServer || []).filter((_, j) => j !== fi) } : it)));
+  }
+
   async function handlePassSubmit() {
     if (!passSess || passItems.length === 0) return;
+    // 首次点击：无论有无证据都先弹确认框（提醒证据与结束流程）；确认后再真正提交
+    if (!passConfirmSubmit) {
+      const noEv = passItems.filter(
+        (it) => (!it.evidence || it.evidence.length === 0) && (!it.evServer || it.evServer.length === 0)
+      );
+      setPassNoEvItems(noEv);
+      setPassConfirmSubmit(true);
+      return;
+    }
+    setPassConfirmSubmit(false);
+    setPassNoEvItems([]);
     const filesByIndex = {};
     passItems.forEach((it, i) => {
       if (it.evidence && it.evidence.length) filesByIndex[i] = it.evidence;
@@ -1055,7 +1093,8 @@ export default function App() {
     const itemsPayload = passItems.map((it) => ({
       category: it.category,
       points: parseFloat(it.points) || 0,
-      basis: it.basis || ""
+      basis: it.basis || "",
+      evidence: it.evServer || []
     }));
     setSubmitting(true);
     setPassErr("");
@@ -1068,6 +1107,8 @@ export default function App() {
       setPassDone(false);
       setPassEnded(false);
       setPassSid("");
+      setPassConfirmSubmit(false);
+      setPassNoEvItems([]);
       loadAwards();
     } catch (err) {
       setPassErr(err.message);
@@ -1597,6 +1638,16 @@ export default function App() {
                                 <span key={fi} className="file-count">
                                   {f.name}
                                   <button className="link" onClick={() => removePassItemFile(idx, fi)}> ✕</button>
+                                </span>
+                              ))}
+                            </div>
+                          )}
+                          {it.evServer && it.evServer.length > 0 && (
+                            <div className="assess-evidence">
+                              {it.evServer.map((f, fi) => (
+                                <span key={`s${fi}`} className="file-count assess-ev-server" title="智能识别自动挂载的证据（已存服务器）">
+                                  {f.replace(/^[0-9a-f]{32}_/, "").slice(0, 40)}
+                                  <button className="link" onClick={() => removePassItemServerFile(idx, fi)}> ✕</button>
                                 </span>
                               ))}
                             </div>
@@ -2341,6 +2392,32 @@ export default function App() {
         onCancel={() => setPreview(null)}
       >
         {preview && <img className="img-preview" src={evidenceUrl(preview.aid, preview.file)} alt={preview.file} />}
+      </Modal>
+
+      <Modal
+        open={passConfirmSubmit}
+        title="确认提交加分项？"
+        danger
+        confirmText="确认提交（结束流程）"
+        cancelText="取消，继续筛查"
+        onConfirm={handlePassSubmit}
+        onCancel={() => { setPassConfirmSubmit(false); setPassNoEvItems([]); }}
+      >
+        <p><b>1. 是否已确认证据？</b>{passNoEvItems.length > 0
+          ? <>以下 {passNoEvItems.length} 条加分项<b>尚未上传任何证据</b>（证书/截图等）。无证据提交仍会生成申报，但审批时可能因材料不足被驳回。</>
+          : "当前加分项均已带证据。"}</p>
+        {passNoEvItems.length > 0 && (
+          <ul className="manage-list">
+            {passNoEvItems.map((it, i) => (
+              <li key={i} className="result-item">
+                <span>{it.category}</span>
+                <span>{it.points} 分</span>
+                <span className="assess-basis">{(it.basis || "").slice(0, 40)}</span>
+              </li>
+            ))}
+          </ul>
+        )}
+        <p><b>2. 提交后将结束本次流程。</b>如果还想继续筛查其他加分项，请点「取消，继续筛查」，等全部核对完再一起提交。</p>
       </Modal>
     </div>
   );
