@@ -50,6 +50,7 @@
 ## API 契约
 - `POST /api/login` `{"username","password"}` → `{"token"}`（限速 5 次/分钟/IP）；`POST /api/logout` + Bearer token 使 token 失效
 - `POST /api/upload` multipart 字段 `file` + `Authorization: Bearer <token>`（无/错 token 返回 401）
+- `POST /api/secondclass/import` + Bearer token，multipart `file`+`class_id`+`threshold`(默认2) → 导入第二课堂统计 xlsx（表头按名匹配「学号」「学分」列，非写死索引），对**学分≥threshold 且在本班榜单**的学生**德育(deyu)+10**（封顶100，重算 total），未达标/名单外不动；**防重复**：同班重复导入先撤销上次导入加的 10 分（meta 键 `sc2_{class_id[:27]}` 记上次达标 sid 集，因 meta.k 仅 32 字符故截断）再按新文件加；每次加减写 adjust_log（op=add/sub，field=deyu）留痕，单事务 `db.apply_secondclass` 完成（UPDATE+INSERT log+写 meta 原子）。返回 `{qualified, applied, changes, skipped}`。admin 限本班（check_class_scope）。PDF 依据：德育·社会实践「达到第二课堂学分要求加 10 分，未达到不加」
 - `GET /api/leaderboard` → `{"students":[{rank,sid,name,course_count,credits,gpa,deyu,score,tiyu,meiyu,laoyu,fujia,total}], "meta":{rows,source}}`（score 即智育，total 即综合测评成绩）。**榜单只读，不再支持点击改分**
 - `POST /api/scores/adjust` + Bearer token `{"sids","field","op","points"}` → `{"changed":[{sid,name,field,old,new,total}]}`（管理员批量调整分数表单：field 限 deyu/meiyu/laoyu/fujia，op 限 add/sub/set，数值按板块封顶 100/附加 5；sids 逗号/空格分隔，每项先精确匹配学号、否则按正则 fullmatch，任一项匹配不到整体 400；每次调整写入 MySQL `adjust_log` 表留痕）
 - `GET /api/export` → Excel(.xlsx，openpyxl 生成，13 列：排名,学号,姓名,课程数,总学分,平均学分绩点,德育,智育,体育,美育,劳育,附加分,综合测评成绩)

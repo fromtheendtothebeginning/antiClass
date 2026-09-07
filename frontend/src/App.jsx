@@ -20,6 +20,7 @@ import {
   fetchClasses,
   fetchLeaderboard,
   getAiSettings,
+  importSecondClass,
   listAiModels,
   listAwards,
   login,
@@ -410,6 +411,11 @@ export default function App() {
   const [clearClassTarget, setClearClassTarget] = useState(null);
   const [evidenceZipClass, setEvidenceZipClass] = useState("");
   const [zipping, setZipping] = useState(false);
+  const [scClassId, setScClassId] = useState("");
+  const [scThreshold, setScThreshold] = useState("2");
+  const [scFile, setScFile] = useState(null);
+  const [scBusy, setScBusy] = useState(false);
+  const scFileRef = useRef(null);
 
   const [applyType, setApplyType] = useState("ai");
   const [applySid, setApplySid] = useState("");
@@ -799,6 +805,36 @@ export default function App() {
       setManageMsg({ type: "err", text: err.message });
     } finally {
       setZipping(false);
+    }
+  }
+
+  async function handleImportSecondClass(e) {
+    e.preventDefault();
+    if (!scFile) {
+      setManageMsg({ type: "err", text: "请选择第二课堂统计 xlsx 文件" });
+      return;
+    }
+    const target = scClassId || (role === "admin" ? myClassId : "");
+    if (!target) {
+      setManageMsg({ type: "err", text: "请选择班级" });
+      return;
+    }
+    const threshold = parseFloat(scThreshold) || 0;
+    setManageMsg(null);
+    setScBusy(true);
+    try {
+      const res = await importSecondClass(scFile, token, target, threshold);
+      setManageMsg({
+        type: "ok",
+        text: `导入完成：${res.qualified} 人达标（学分≥${res.threshold}），已对 ${res.applied} 人德育 +10 分；重复导入自动先撤后加，不会重复累加。${res.skipped && res.skipped.length ? `跳过 ${res.skipped.length} 个不在本班榜单的学号。` : ""}`,
+      });
+      setScFile(null);
+      if (scFileRef.current) scFileRef.current.value = "";
+      await loadBoard(classSel);
+    } catch (err) {
+      setManageMsg({ type: "err", text: err.message });
+    } finally {
+      setScBusy(false);
     }
   }
 
@@ -2032,6 +2068,44 @@ export default function App() {
                 <label>成绩 xlsx *</label>
                 <input ref={fileRef} type="file" accept=".xlsx" onChange={handleUpload} disabled={uploading} />
                 <span className="file-count">{uploading ? "导入中…" : "导入会替换该班级现有榜单数据"}</span>
+              </form>
+            </div>
+            <div className="ai-section">
+              <h3>第二课堂导入</h3>
+              <p className="hint">上传第二课堂统计 xlsx（含「学号」「学分」列），对学分达到阈值的学生德育加 10 分；未达标与名单外学生不变。同一班级重复导入会自动先撤销上次加的 10 分再按新文件重加，不会重复累加。</p>
+              <form className="apply-form" onSubmit={handleImportSecondClass}>
+                {role === "root" ? (
+                  <>
+                    <label>目标班级 *</label>
+                    <Dropdown
+                      value={scClassId}
+                      onChange={setScClassId}
+                      options={classes.map((c) => ({ value: c.id, label: c.name }))}
+                      placeholder="选择班级"
+                    />
+                  </>
+                ) : (
+                  <p className="hint">你负责的班级：{classes.find((c) => c.id === myClassId)?.name || "（未分配）"}</p>
+                )}
+                <label>达标阈值（学分 ≥ 阈值即达标）*</label>
+                <input
+                  type="number"
+                  step="0.1"
+                  min="0"
+                  value={scThreshold}
+                  onChange={(e) => setScThreshold(e.target.value)}
+                />
+                <label>第二课堂统计 xlsx *</label>
+                <input
+                  ref={scFileRef}
+                  type="file"
+                  accept=".xlsx"
+                  onChange={(e) => setScFile(e.target.files[0] || null)}
+                  disabled={scBusy}
+                />
+                <button type="submit" className="btn primary-btn" disabled={scBusy}>
+                  {scBusy ? "导入中…" : "导入并加分"}
+                </button>
               </form>
             </div>
             <div className="ai-section">

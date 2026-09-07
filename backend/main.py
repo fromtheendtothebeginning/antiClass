@@ -692,6 +692,157 @@ def upload(
     return {"ok": True, "students": len(students), "rows": rows, "source": filename}
 
 
+@app.post("/api/secondclass/import")
+def import_secondclass(
+    file: UploadFile = File(...),
+    class_id: str = Form(""),
+    threshold: float = Form(2.0),
+    authorization: str = Header(default=""),
+):
+    """导入第二课堂统计 xlsx：对「学分 ≥ threshold」的学生德育(deyu)+10。
+
+    - 防重复：同班再次导入先撤销上一次导入加的 10 分，再按新文件应用。
+    - 未达标 / 名单外学生不动（保留现有德育分）。
+    - 每次加减写 adjust_log 留痕；meta 记上次达标学号集。
+    """
+    session = require_token(authorization)
+    if session["role"] == "admin":
+        class_id = session.get("class_id") or ""
+        if not class_id:
+            raise HTTPException(status_code=400, detail="你尚未分配负责班级，请联系 root")
+    elif not class_id:
+        raise HTTPException(status_code=400, detail="请选择班级")
+    check_class_scope(session, class_id)
+    if not db.get_class(class_id):
+        raise HTTPException(status_code=400, detail="班级不存在，请先创建班级")
+    if threshold < 0:
+        raise HTTPException(status_code=400, detail="阈值不能为负")
+    filename = file.filename or "secondclass.xlsx"
+    if not filename.lower().endswith(".xlsx"):
+        raise HTTPException(status_code=400, detail="仅支持 .xlsx 文件")
+    # meta.k 列仅 32 字符，class_id 32 位 hex，短 key 用前缀+截断
+    meta_key = f"sc2_{class_id[:27]}"
+
+    tmp = DATA_DIR / f"{uuid.uuid4().hex}.xlsx"
+    DATA_DIR.mkdir(parents=True, exist_ok=True)
+    size = 0
+    with tmp.open("wb") as f:
+        while True:
+            chunk = file.file.read(1024 * 1024)
+            if not chunk:
+                break
+            size += len(chunk)
+            if size > MAX_FILE_SIZE:
+                f.close()
+                tmp.unlink(missing_ok=True)
+                raise HTTPException(status_code=400, detail="文件超过大小限制（10MB）")
+            f.write(chunk)
+    try:
+        wb = load_workbook(tmp, data_only=True)
+        ws = wb[wb.sheetnames[0]]
+        rows = list(ws.iter_rows(values_only=True))
+        wb.close()
+        if not rows:
+            raise HTTPException(status_code=400, detail="文件为空")
+        header = [str(h).strip() if h is not None else "" for h in rows[0]]
+        sid_col = next((i for i, h in enumerate(header) if h == "学号"), None)
+        cred_col = next((i for i, h in enumerate(header) if h == "学分"), None)
+        if sid_col is None or cred_col is None:
+            raise HTTPException(
+                status_code=400,
+                detail=f"表头缺少「学号」或「学分」列（实际表头：{'、'.join(header[:8])}…）",
+            )
+        # 解析文件：sid -> 学分（单元格可能是文本，容错转换）
+        file_credits = {}
+        for r in rows[1:]:
+            if not r or sid_col >= len(r) or cred_col >= len(r):
+                continue
+            sid = str(r[sid_col]).strip() if r[sid_col] is not None else ""
+            if not sid:
+                continue
+            try:
+                val = float(str(r[cred_col]).strip())
+            except (TypeError, ValueError):
+                continue
+            file_credits[sid] = val
+        if not file_credits:
+            raise HTTPException(status_code=400, detail="未能从文件中解析出学号与学分数据")
+    finally:
+        tmp.unlink(missing_ok=True)
+
+    pool = {s["sid"]: s for s in db.list_students(class_id)}
+    now = datetime.now().isoformat(timespec="seconds")
+
+    # 1) 防重复：撤销上一次导入（meta 记录的达标学号集）
+    ops = []  # {sid,name,op,points,old,new,total}
+    last_raw = db.get_meta(meta_key, "")
+    last = {}
+    if last_raw:
+        try:
+            last = json.loads(last_raw)
+        except (json.JSONDecodeError, TypeError):
+            last = {}
+    for sid in last.get("sids", []) or []:
+        stu = pool.get(sid)
+        if not stu:
+            continue
+        old = round(float(stu["deyu"]), 2)
+        new = round(max(old - 10.0, 0.0), 2)
+        if new == old:
+            continue
+        stu["deyu"] = new
+        total = calc_total(stu["deyu"], stu["score"], stu["tiyu"], stu["meiyu"], stu["laoyu"], stu["fujia"])
+        ops.append(
+            {
+                "sid": sid, "name": stu["name"], "op": "sub", "points": 10.0,
+                "old": old, "new": new, "total": total,
+            }
+        )
+
+    # 2) 应用新文件：学分 >= threshold 且在本班榜单的学生 +10（封顶 100）
+    applied = []
+    skipped = []
+    qualified = []
+    for sid, credit in file_credits.items():
+        stu = pool.get(sid)
+        if not stu:
+            skipped.append({"sid": sid, "reason": "学号不在本班榜单"})
+            continue
+        if credit < threshold:
+            continue  # 未达标不动
+        qualified.append(sid)
+        old = round(float(stu["deyu"]), 2)
+        new = round(min(old + 10.0, 100.0), 2)
+        if new != old:
+            stu["deyu"] = new
+            total = calc_total(stu["deyu"], stu["score"], stu["tiyu"], stu["meiyu"], stu["laoyu"], stu["fujia"])
+            ops.append(
+                {
+                    "sid": sid, "name": stu["name"], "op": "add", "points": 10.0,
+                    "old": old, "new": new, "total": total,
+                }
+            )
+        applied.append({"sid": sid, "name": stu["name"], "credit": credit, "old": old, "new": new})
+
+    # 3) 单事务写库 + 留痕 + 更新 meta
+    meta_value = json.dumps({"threshold": round(float(threshold), 2), "sids": qualified, "time": now}, ensure_ascii=False)
+    if ops:
+        for o in ops:
+            o["created_at"] = now
+        db.apply_secondclass(class_id, ops, meta_key, meta_value)
+    else:
+        db.set_meta(meta_key, meta_value)  # 无变化也更新阈值/名单，保证下次撤销依据最新
+
+    return {
+        "ok": True,
+        "threshold": round(float(threshold), 2),
+        "qualified": len(qualified),
+        "applied": len(applied),
+        "changes": len(ops),
+        "skipped": skipped,
+    }
+
+
 @app.get("/api/leaderboard")
 def leaderboard(class_id: str | None = None):
     students = db.list_students(class_id or None)

@@ -92,6 +92,18 @@ export function uploadXlsx(file, token, classId) {
   });
 }
 
+export function importSecondClass(file, token, classId, threshold) {
+  const form = new FormData();
+  form.append("file", file);
+  form.append("class_id", classId);
+  form.append("threshold", String(threshold));
+  return request("/secondclass/import", {
+    method: "POST",
+    headers: { Authorization: `Bearer ${token}` },
+    body: form
+  });
+}
+
 export function exitData(token) {
   return request("/exit", {
     method: "POST",

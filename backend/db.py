@@ -327,6 +327,36 @@ def list_adjust_log(limit=500):
         return [{k: _plain(v) for k, v in r.items()} for r in cur.fetchall()]
 
 
+def apply_secondclass(class_id, ops, meta_key, meta_value):
+    """第二课堂导入：单事务内批量调 deyu 并留痕 adjust_log，最后写 meta。
+
+    ops: list[dict]，每项 {sid, name, field, op('add'/'sub'), points, old, new}
+    — 调用方已算好 old/new（含封顶/下限）与 total，这里按 new 写回 students 并同步 total。
+    """
+    with tx() as cur:
+        for e in ops:
+            cur.execute(
+                "UPDATE students SET `deyu`=%s, total=%s WHERE sid=%s AND class_id=%s",
+                (
+                    round(float(e["new"]), 2),
+                    round(float(e["total"]), 2),
+                    e["sid"],
+                    class_id,
+                ),
+            )
+            cur.execute(
+                "INSERT INTO adjust_log (created_at,sid,name,field,op,points,old,new) VALUES (%s,%s,%s,%s,%s,%s,%s,%s)",
+                (
+                    e["created_at"], e["sid"], e["name"], "deyu", e["op"],
+                    round(float(e["points"]), 2), round(float(e["old"]), 2), round(float(e["new"]), 2),
+                ),
+            )
+        cur.execute(
+            "INSERT INTO meta (k,v) VALUES (%s,%s) ON DUPLICATE KEY UPDATE v=VALUES(v)",
+            (meta_key, str(meta_value)),
+        )
+
+
 # ---------- meta ----------
 
 def set_meta(key, value):
