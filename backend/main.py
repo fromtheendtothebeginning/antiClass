@@ -1063,12 +1063,19 @@ def export(class_id: str | None = None):
     ws.title = "Sheet1"
     headers = ["学号", "姓名", "德*15%", "智*60%", "体*10%", "美*5%", "劳*10%", "附加", "总分"]
 
+    # 文件名对齐附件「25-26下学期xx班综合测评总分.xlsx」：xx 处放实际班级名
+    cls = db.get_class(class_id) if class_id else None
+    cls_name = cls["name"] if cls else ""
+    file_name = f"25-26下学期{cls_name}班综合测评总分.xlsx"
+
     # 样式严格对齐附件「25-26下学期xx班综合测评总分.xlsx」：
     # 等线 11 号（学号列仿宋）、全表细边框、学号列白色实底+文本格式、表头居中
     thin = Side(style="thin")
     border = Border(left=thin, right=thin, top=thin, bottom=thin)
     font_body = Font(name="等线", size=11)
     font_sid = Font(name="仿宋", size=11)
+    red_font = Font(name="等线", size=11, color="FFFF0000")
+    red_sid_font = Font(name="仿宋", size=11, color="FFFF0000")
     center = Alignment(horizontal="center", vertical="center")
     header_font = Font(name="等线", size=11)
 
@@ -1102,7 +1109,8 @@ def export(class_id: str | None = None):
         for i, col in enumerate("ABCDEFGHI", start=1):
             cell = ws.cell(row=r, column=i)
             cell.border = border
-            cell.font = font_sid if col == "A" else font_body
+            # 挂科（无参评资格）行整行标红
+            cell.font = red_sid_font if (col == "A" and stu.get("failed")) else (red_font if stu.get("failed") else (font_sid if col == "A" else font_body))
             if col in ("A", "B"):
                 # 学号/姓名：文本格式（附件 A、B 列均为 @），学号列附白色实底
                 cell.number_format = "@"
@@ -1126,7 +1134,7 @@ def export(class_id: str | None = None):
     return StreamingResponse(
         buf,
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        headers={"Content-Disposition": "attachment; filename*=UTF-8''" + quote("综合测评总分.xlsx")},
+        headers={"Content-Disposition": "attachment; filename*=UTF-8''" + quote(file_name)},
     )
 
 

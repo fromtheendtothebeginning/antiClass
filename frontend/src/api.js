@@ -170,8 +170,19 @@ export async function exportExcel(classId) {
   const blob = await res.blob();
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
+  // 优先用响应头里的文件名（含班级名），无则回退
+  const cd = res.headers.get("Content-Disposition") || "";
+  let fileName = "综合测评总分.xlsx";
+  const m = /filename\*=UTF-8''([^;]+)/i.exec(cd) || /filename=([^;]+)/i.exec(cd);
+  if (m) {
+    try {
+      fileName = decodeURIComponent(m[1].replace(/^"|"$/g, ""));
+    } catch {
+      fileName = m[1].replace(/^"|"$/g, "");
+    }
+  }
   a.href = url;
-  a.download = "综合测评总分.xlsx";
+  a.download = fileName;
   a.rel = "noopener";
   document.body.appendChild(a);
   a.click();
