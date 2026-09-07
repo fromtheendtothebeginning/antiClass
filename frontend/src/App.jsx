@@ -14,6 +14,7 @@ import {
   deleteClass,
   editAward,
   evidenceUrl,
+  exportEvidenceZip,
   exportExcel,
   fetchAdmins,
   fetchClasses,
@@ -407,6 +408,8 @@ export default function App() {
   const [newAdminClass, setNewAdminClass] = useState("");
   const [manageMsg, setManageMsg] = useState(null);
   const [clearClassTarget, setClearClassTarget] = useState(null);
+  const [evidenceZipClass, setEvidenceZipClass] = useState("");
+  const [zipping, setZipping] = useState(false);
 
   const [applyType, setApplyType] = useState("ai");
   const [applySid, setApplySid] = useState("");
@@ -776,6 +779,26 @@ export default function App() {
       await loadClasses();
     } catch (err) {
       setManageMsg({ type: "err", text: err.message });
+    }
+  }
+
+  async function handleExportZip() {
+    if (!token) return;
+    const target = evidenceZipClass || (role === "admin" ? myClassId : "");
+    setManageMsg(null);
+    setZipping(true);
+    try {
+      await exportEvidenceZip(target, token);
+      setManageMsg({
+        type: "ok",
+        text: target
+          ? "已导出证据压缩包（该班级已通过的申报）"
+          : "已导出全部班级证据压缩包（仅已通过的申报）",
+      });
+    } catch (err) {
+      setManageMsg({ type: "err", text: err.message });
+    } finally {
+      setZipping(false);
     }
   }
 
@@ -2010,6 +2033,29 @@ export default function App() {
                 <input ref={fileRef} type="file" accept=".xlsx" onChange={handleUpload} disabled={uploading} />
                 <span className="file-count">{uploading ? "导入中…" : "导入会替换该班级现有榜单数据"}</span>
               </form>
+            </div>
+            <div className="ai-section">
+              <h3>申报证据导出</h3>
+              <p className="hint">将已通过审批的申报按人打包：每人一个「学号_姓名」文件夹，内含该生申报明细 JSON 与全部证据文件，并附汇总 index.json，下载为 zip。</p>
+              {role === "root" ? (
+                <>
+                  <label>导出班级</label>
+                  <Dropdown
+                    value={evidenceZipClass}
+                    onChange={setEvidenceZipClass}
+                    options={[
+                      { value: "", label: "全部班级" },
+                      ...classes.map((c) => ({ value: c.id, label: c.name })),
+                    ]}
+                    placeholder="选择班级"
+                  />
+                </>
+              ) : (
+                <p className="hint">你负责的班级：{classes.find((c) => c.id === myClassId)?.name || "（未分配）"}</p>
+              )}
+              <button type="button" className="btn primary-btn" onClick={handleExportZip} disabled={zipping || !token}>
+                {zipping ? "打包中…" : "导出证据 zip"}
+              </button>
             </div>
             {role === "root" && (
               <>

@@ -53,9 +53,11 @@
 - `GET /api/leaderboard` → `{"students":[{rank,sid,name,course_count,credits,gpa,deyu,score,tiyu,meiyu,laoyu,fujia,total}], "meta":{rows,source}}`（score 即智育，total 即综合测评成绩）。**榜单只读，不再支持点击改分**
 - `POST /api/scores/adjust` + Bearer token `{"sids","field","op","points"}` → `{"changed":[{sid,name,field,old,new,total}]}`（管理员批量调整分数表单：field 限 deyu/meiyu/laoyu/fujia，op 限 add/sub/set，数值按板块封顶 100/附加 5；sids 逗号/空格分隔，每项先精确匹配学号、否则按正则 fullmatch，任一项匹配不到整体 400；每次调整写入 MySQL `adjust_log` 表留痕）
 - `GET /api/export` → Excel(.xlsx，openpyxl 生成，13 列：排名,学号,姓名,课程数,总学分,平均学分绩点,德育,智育,体育,美育,劳育,附加分,综合测评成绩)
+- `GET /api/export/evidence-zip`（+ Bearer token）→ 将**已通过(approved=是)**的申报按人打包 zip：每人一个「学号_姓名/」目录（含该生 `申报明细.json` 与 `evidence/` 证据文件），外加总 `index.json`。root 可不带 class_id 导出全部班级或指定单班；admin 不传 class_id 时强制导出本班，传他班 403（`check_class_scope`）。zip 在内存 BytesIO 生成后 StreamingResponse（`content-disposition: attachment; filename=evidence_backup_YYYYMMDD.zip`）；无已通过申报返回 400。证据归档名去掉 save_upload 的 32 位 hex 前缀（`_evidence_readable`），同人重名自动加序号；folder 缺失/文件丢失的记录在 JSON 里标 `missing: true` 跳过
 - `POST /api/awards/analyze`（公开）multipart `sid`+`text`+`files[]` → `{"draft_id","sid","name","items":[{category,points,basis,evidence}]}`（AI 分类生成**草稿**，不直接入库；未配 AI/学号不存在/未识别出加分项返回 400）。stage1 AI 会为每个加分项输出 `images`（1 起始的图片编号列表），后端据此把证据图片**按加分项分配**；AI 未给 images 时回退全部图片，非图片文件每条都带。草稿存内存 `DRAFTS`（重启即失，上限 200 个）。
 - `POST /api/awards/manual`（公开，10 次/小时/IP）multipart `sid`+`category`+`points`+`basis`+`files[]` → `{"created":[...]}`（传统表单申报，不经 AI，直接生成待审批记录；basis 必填 ≤2000 字，分值按栏目封顶）。
 - `POST /api/awards/submit`（公开）`{"submissions":[{draft_id, items:[{category,points,basis,evidence}]}]}` → `{"created":[...]}`（本人审核草稿后提交，支持一键提交多份草稿；evidence 会按草稿校验白名单；提交后草稿删除）。`POST /api/awards/drafts/{draft_id}/delete`（公开）删除未提交的 AI 分析草稿并清理其临时证据文件（30 次/10 分/IP）。
+- `POST /api/awards/batch` + Bearer token，multipart `sids`+`category`+`points`+`basis`+`files[]`（管理员批量申报：sids 支持多学号分隔，逐学号校验存在性并 `check_class_scope`，班级外学号任一即拒，成功插入多条待审批记录）
 - `GET /api/awards`（公开）→ `{"awards":[...]}`；`GET /api/awards/{id}/evidence/{file}`（公开）下载/预览证据；`POST /api/awards/{id}/approve` body 可带 `{points,category}`；`POST /api/awards/{id}/reject`；`POST /api/awards/{id}/withdraw`（撤回，撤销加分回待审批）；`POST /api/awards/{id}/delete`（删除，若已通过一并撤销加分）；`POST /api/awards/class-committee`（公开）`sid`+`role` 生成班委德育加分
 - 其余路径由 `frontend/dist` 静态托管（未构建返回 404）
 

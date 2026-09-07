@@ -28,6 +28,7 @@ anticlass-ca.crt
 
 # 工具本地配置（含部署命令记录，勿提交）
 .commandcode/
+.zcode/
 
 # OS
 Thumbs.db

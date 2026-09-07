@@ -160,10 +160,38 @@ export async function exportExcel(classId) {
   const a = document.createElement("a");
   a.href = url;
   a.download = "leaderboard.xlsx";
+  a.rel = "noopener";
   document.body.appendChild(a);
   a.click();
-  a.remove();
-  URL.revokeObjectURL(url);
+  setTimeout(() => {
+    a.remove();
+    URL.revokeObjectURL(url);
+  }, 5000);
+}
+
+export async function exportEvidenceZip(classId, token) {
+  const res = await fetch(`${API}/export/evidence-zip${classId ? `?class_id=${encodeURIComponent(classId)}` : ""}`, {
+    headers: { Authorization: `Bearer ${token}` }
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.detail || "导出失败");
+  }
+  const blob = await res.blob();
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  const cd = res.headers.get("Content-Disposition") || "";
+  const m = /filename=([^;]+)/.exec(cd);
+  a.href = url;
+  a.download = m ? m[1].replace(/^"|"$/g, "") : "evidence_backup.zip";
+  a.rel = "noopener";
+  document.body.appendChild(a);
+  a.click();
+  // 延迟撤销 blob URL：立即 revoke 会在某些浏览器/大文件下载尚未开始时取消下载
+  setTimeout(() => {
+    a.remove();
+    URL.revokeObjectURL(url);
+  }, 5000);
 }
 
 export function analyzeAward(sid, text, files) {

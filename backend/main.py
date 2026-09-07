@@ -8,6 +8,7 @@ import sys
 import threading
 import time
 import uuid
+import zipfile
 from collections import defaultdict, deque
 from datetime import datetime
 from pathlib import Path
@@ -789,6 +790,99 @@ def export(class_id: str | None = None):
     )
 
 
+# zip 内禁止出现的目录名字符（Windows/常规 zip 工具不友好的字符一律替换）
+_ZIP_NAME_BAD = re.compile(r'[\\/:*?"<>|\x00-\x1f]')
+
+
+def _evidence_readable(stored_name):
+    """去掉 save_upload 加的 32 位 hex 前缀，还原成可读文件名。"""
+    m = re.fullmatch(r"[0-9a-f]{32}_(.+)", stored_name)
+    return m.group(1) if m else stored_name
+
+
+def build_evidence_zip(class_id=None):
+    """把「已通过(approved=是)」申报按人打包：每人一个「学号_姓名/」目录，
+    内含 申报明细.json 与 evidence/ 证据文件，外加总 index.json。返回 BytesIO。"""
+    records = [r for r in db.list_awards(class_id or None) if r.get("approved") == "是"]
+    if not records:
+        raise HTTPException(status_code=400, detail="当前范围暂无已通过的申报，无需导出")
+
+    # 按学号聚合（同班同人多次申报合并；姓名用记录快照，空则回退学号）
+    people = {}
+    for r in records:
+        people.setdefault(r["sid"], {"name": r.get("name") or r["sid"], "records": []})["records"].append(r)
+
+    buf = io.BytesIO()
+    summary = {"students": [], "total_records": len(records), "total_files": 0}
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
+        for sid, p in people.items():
+            folder_name = _ZIP_NAME_BAD.sub("_", f"{sid}_{p['name']}") or sid
+            used_names = set()  # 同人证据去重名
+            person_files = 0
+            person_json = {"sid": sid, "name": p["name"], "class_id": p["records"][0].get("class_id", ""), "records": []}
+            for r in p["records"]:
+                rec_json = {
+                    "id": r["id"],
+                    "category": r["category"],
+                    "points": r["points"],
+                    "basis": r["basis"],
+                    "created_at": r["created_at"],
+                    "approved": r["approved"],
+                    "evidence": [],
+                }
+                base = (UPLOADS_DIR / (r.get("folder") or "")).resolve()
+                for f in r.get("evidence") or []:
+                    if not r.get("folder"):
+                        rec_json["evidence"].append({"source": f, "missing": True})
+                        continue
+                    path = (base / f).resolve()
+                    if not path.is_relative_to(base) or not path.exists():
+                        rec_json["evidence"].append({"source": f, "missing": True})
+                        continue
+                    # 归档名：还原可读原名，冲突时加序号（如 xxx_2.png）
+                    name = _evidence_readable(f)
+                    stem, dot = Path(name).stem, Path(name).suffix
+                    archive = name
+                    n = 2
+                    while archive in used_names:
+                        archive = f"{stem}_{n}{dot}"
+                        n += 1
+                    used_names.add(archive)
+                    zf.write(path, f"{folder_name}/evidence/{archive}")
+                    rec_json["evidence"].append({"file": f"evidence/{archive}", "source": f, "missing": False})
+                    person_files += 1
+                person_json["records"].append(rec_json)
+            zf.writestr(f"{folder_name}/申报明细.json", json.dumps(person_json, ensure_ascii=False, indent=2))
+            summary["students"].append({"sid": sid, "name": p["name"], "records": len(person_json["records"]), "files": person_files, "folder": folder_name})
+            summary["total_files"] += person_files
+        zf.writestr("index.json", json.dumps(summary, ensure_ascii=False, indent=2))
+    buf.seek(0)
+    return buf
+
+
+@app.get("/api/export/evidence-zip")
+def export_evidence_zip(class_id: str | None = None, authorization: str = Header(default="")):
+    session = require_token(authorization)
+    if class_id:
+        check_class_scope(session, class_id)
+    else:
+        if session["role"] != "root":
+            class_id = session.get("class_id")
+            if not class_id:
+                raise HTTPException(status_code=403, detail="账号未绑定班级，无法导出")
+    buf = build_evidence_zip(class_id)
+    zip_name = f"evidence_backup_{datetime.now():%Y%m%d}.zip"
+    return StreamingResponse(
+        buf,
+        media_type="application/zip",
+        headers={
+            "Content-Disposition": f"attachment; filename={zip_name}",
+            # zip 已在内存完整生成，显式给 Content-Length，避免 chunked 下载在某些浏览器被拦截
+            "Content-Length": str(len(buf.getvalue())),
+        },
+    )
+
+
 @app.post("/api/awards/analyze")
 def analyze_award(
     sid: str = Form(...),
@@ -1291,9 +1385,9 @@ def delete_award(aid: str, authorization: str = Header(default="")):
     undone = undo_award_points(record)
     db.delete_award(aid)
     folder = record["folder"]
-    if not db.folder_in_use(folder):
+    # folder 为空时 UPLOADS_DIR / "" 等于 uploads 根目录，会误删全部证据，必须跳过
+    if folder and not db.folder_in_use(folder):
         shutil.rmtree(UPLOADS_DIR / folder, ignore_errors=True)
-    return {"ok": True, "undone": undone}
     return {"ok": True, "undone": undone}
 
 
