@@ -1,3 +1,4 @@
+import hashlib
 import io
 import json
 import os
@@ -102,26 +103,43 @@ def rate_limit(key, limit, window):
 
 
 def save_upload(f, upload_dir):
+    """保存上传文件，相同内容自动去重：首次写入 _content_hashes/，后续用软连接指向。
+
+    Windows 不支持 os.symlink 时自动回退为复制。
+    """
     suffix = Path(f.filename or "file").suffix.lower()
     if suffix in DANGEROUS_EXT:
         raise HTTPException(
             status_code=400,
             detail=f"文件 {f.filename} 类型不允许上传（{suffix}），请转换为图片/PDF/Word 等普通文档",
         )
-    name = f"{uuid.uuid4().hex}_{Path(f.filename or 'file').name}"
-    target = upload_dir / name
+    original_name = Path(f.filename or "file").name
+    # 读取全部内容以计算哈希（文件上限 10 MB，内存可承受）
+    content = b""
     size = 0
-    with target.open("wb") as out:
-        while True:
-            chunk = f.file.read(1024 * 1024)
-            if not chunk:
-                break
-            size += len(chunk)
-            if size > MAX_FILE_SIZE:
-                out.close()
-                target.unlink(missing_ok=True)
-                raise HTTPException(status_code=400, detail=f"文件 {f.filename} 超过大小限制（10MB）")
-            out.write(chunk)
+    while True:
+        chunk = f.file.read(1024 * 1024)
+        if not chunk:
+            break
+        size += len(chunk)
+        if size > MAX_FILE_SIZE:
+            raise HTTPException(status_code=400, detail=f"文件 {f.filename} 超过大小限制（10MB）")
+        content += chunk
+    content_hash = hashlib.sha256(content).hexdigest()
+    hash_dir = UPLOADS_DIR / "_content_hashes"
+    hash_dir.mkdir(parents=True, exist_ok=True)
+    canonical = hash_dir / f"{content_hash}_{original_name}"
+    if not canonical.exists():
+        canonical.write_bytes(content)
+    # 在目标目录创建软连接指向内容寻址存储的原始文件
+    name = f"{uuid.uuid4().hex}_{original_name}"
+    target = upload_dir / name
+    rel = os.path.relpath(canonical, upload_dir)
+    try:
+        os.symlink(rel, target)
+    except OSError:
+        # Windows 等不支持 symlink 的环境：回退为复制
+        shutil.copy2(canonical, target)
     return name
 
 
@@ -1150,7 +1168,10 @@ def _evidence_readable(stored_name):
 
 def build_evidence_zip(class_id=None):
     """把「已通过(approved=是)」申报按人打包：每人一个「学号_姓名/」目录，
-    内含 申报明细.json 与 evidence/ 证据文件，外加总 index.json。返回 BytesIO。"""
+    内含 申报明细.json 与 evidence/ 证据文件，外加总 index.json。返回 BytesIO。
+
+    被多人引用的同一证据文件放入顶层「公共证据/」目录，个人 evidence/ 中以软连接引用。
+    """
     records = [r for r in db.list_awards(class_id or None) if r.get("approved") == "是"]
     if not records:
         raise HTTPException(status_code=400, detail="当前范围暂无已通过的申报，无需导出")
@@ -1160,9 +1181,49 @@ def build_evidence_zip(class_id=None):
     for r in records:
         people.setdefault(r["sid"], {"name": r.get("name") or r["sid"], "records": []})["records"].append(r)
 
+    uploads_root = UPLOADS_DIR.resolve()
+
+    # ── 第一遍：收集所有证据，按 canonical path 聚合，判断是否被多人引用 ──
+    # canonical_path → {"readable": str, "ref_sids": set}
+    shared_map = {}
+    for sid, p in people.items():
+        for r in p["records"]:
+            base = (UPLOADS_DIR / (r.get("folder") or "")).resolve()
+            for f in r.get("evidence") or []:
+                if not r.get("folder"):
+                    continue
+                path = (base / f).resolve()
+                if not path.is_relative_to(uploads_root) or not path.exists():
+                    continue
+                if path not in shared_map:
+                    shared_map[path] = {"readable": _evidence_readable(f), "ref_sids": set()}
+                shared_map[path]["ref_sids"].add(sid)
+
+    # 被 ≥2 人引用 → 公共证据
+    public_files = {k: v for k, v in shared_map.items() if len(v["ref_sids"]) >= 2}
+
+    # 公共证据文件名去重（同一可读名只出现一次）
+    public_zip_names = {}  # canonical_path → zip 内文件名
+    used_public = set()
+    for path, info in public_files.items():
+        name = info["readable"]
+        stem, dot = Path(name).stem, Path(name).suffix
+        archive = name
+        n = 2
+        while archive in used_public:
+            archive = f"{stem}_{n}{dot}"
+            n += 1
+        used_public.add(archive)
+        public_zip_names[path] = archive
+
+    # ── 第二遍：写 zip ──
     buf = io.BytesIO()
     summary = {"students": [], "total_records": len(records), "total_files": 0}
     with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
+        # 写公共证据目录
+        for path, archive in public_zip_names.items():
+            zf.write(path, f"公共证据/{archive}")
+
         for sid, p in people.items():
             folder_name = _ZIP_NAME_BAD.sub("_", f"{sid}_{p['name']}") or sid
             used_names = set()  # 同人证据去重名
@@ -1184,7 +1245,7 @@ def build_evidence_zip(class_id=None):
                         rec_json["evidence"].append({"source": f, "missing": True})
                         continue
                     path = (base / f).resolve()
-                    if not path.is_relative_to(base) or not path.exists():
+                    if not path.is_relative_to(uploads_root) or not path.exists():
                         rec_json["evidence"].append({"source": f, "missing": True})
                         continue
                     # 归档名：还原可读原名，冲突时加序号（如 xxx_2.png）
@@ -1196,7 +1257,19 @@ def build_evidence_zip(class_id=None):
                         archive = f"{stem}_{n}{dot}"
                         n += 1
                     used_names.add(archive)
-                    zf.write(path, f"{folder_name}/evidence/{archive}")
+
+                    if path in public_zip_names:
+                        # 公共证据：个人目录以软连接引用
+                        pub_name = public_zip_names[path]
+                        link_target = f"../../公共证据/{pub_name}"
+                        link_info = zipfile.ZipInfo(f"{folder_name}/evidence/{archive}")
+                        link_info.compress_type = zipfile.ZIP_DEFLATED
+                        link_info.external_attr = 0o120777 << 16  # 标记为软连接
+                        zf.writestr(link_info, link_target)
+                    else:
+                        # 非公共证据：直接写入
+                        zf.write(path, f"{folder_name}/evidence/{archive}")
+
                     rec_json["evidence"].append({"file": f"evidence/{archive}", "source": f, "missing": False})
                     person_files += 1
                 person_json["records"].append(rec_json)
@@ -1389,7 +1462,9 @@ def award_evidence(aid: str, filename: str):
     media_type = EVIDENCE_MEDIA.get(Path(filename).suffix.lower(), "application/octet-stream")
     base = (UPLOADS_DIR / record["folder"]).resolve()
     path = (base / filename).resolve()
-    if not path.is_relative_to(base) or not path.exists():
+    # 软连接可能指向 _content_hashes/，只要最终路径仍在 UPLOADS_DIR 内即合法
+    uploads_root = UPLOADS_DIR.resolve()
+    if not path.is_relative_to(uploads_root) or not path.exists():
         raise HTTPException(status_code=404, detail="证据文件不存在")
     return FileResponse(
         path,
