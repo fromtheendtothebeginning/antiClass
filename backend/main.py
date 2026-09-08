@@ -1259,15 +1259,13 @@ def build_evidence_zip(class_id=None):
                     used_names.add(archive)
 
                     if path in public_zip_names:
-                        # 公共证据：直接写入实际文件（zip 内不用软连接，Windows 解压兼容）
-                        zf.write(path, f"{folder_name}/evidence/{archive}")
-                        # 申报明细.json 中标注公共证据来源引用
-                        rec_json["evidence"].append({"file": f"evidence/{archive}", "source": f, "ref": f"公共证据/{public_zip_names[path]}", "missing": False})
+                        # 公共证据：不在个人目录放副本，只在申报明细.json 中标注引用
+                        rec_json["evidence"].append({"source": f, "ref": f"公共证据/{public_zip_names[path]}", "missing": False})
                     else:
-                        # 非公共证据：直接写入
+                        # 非公共证据：写入个人 evidence/ 目录
                         zf.write(path, f"{folder_name}/evidence/{archive}")
                         rec_json["evidence"].append({"file": f"evidence/{archive}", "source": f, "missing": False})
-                    person_files += 1
+                        person_files += 1
                 person_json["records"].append(rec_json)
             zf.writestr(f"{folder_name}/申报明细.json", json.dumps(person_json, ensure_ascii=False, indent=2))
             summary["students"].append({"sid": sid, "name": p["name"], "records": len(person_json["records"]), "files": person_files, "folder": folder_name})
