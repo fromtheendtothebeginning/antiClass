@@ -1259,13 +1259,8 @@ def build_evidence_zip(class_id=None):
                     used_names.add(archive)
 
                     if path in public_zip_names:
-                        # 公共证据：个人目录以软连接引用
-                        pub_name = public_zip_names[path]
-                        link_target = f"../../公共证据/{pub_name}"
-                        link_info = zipfile.ZipInfo(f"{folder_name}/evidence/{archive}")
-                        link_info.compress_type = zipfile.ZIP_DEFLATED
-                        link_info.external_attr = 0o120777 << 16  # 标记为软连接
-                        zf.writestr(link_info, link_target)
+                        # 公共证据：直接写入实际文件（zip 内不用软连接，Windows 解压兼容）
+                        zf.write(path, f"{folder_name}/evidence/{archive}")
                     else:
                         # 非公共证据：直接写入
                         zf.write(path, f"{folder_name}/evidence/{archive}")
