@@ -1,10 +1,36 @@
 const API = "/api";
 
+let onAuthExpired = null;
+
+/** 注册会话失效回调（token 过期/无效时触发，参数为提示文案）。 */
+export function setOnAuthExpired(fn) {
+  onAuthExpired = fn;
+}
+
+const AUTH_EXPIRED_MSG = "登录已过期，请重新登录";
+
+// 统一处理 401：登录接口密码错也是 401，不能当会话过期处理
+function handleUnauthorized(path, status, detail) {
+  const msg = detail || AUTH_EXPIRED_MSG;
+  if (status === 401 && path !== "/login") {
+    onAuthExpired?.(msg);
+    const err = new Error(msg);
+    err.status = status;
+    err.authExpired = true;
+    return err;
+  }
+  return null;
+}
+
 async function request(path, options = {}) {
   const res = await fetch(`${API}${path}`, options);
   if (!res.ok) {
     const err = await res.json().catch(() => ({}));
-    throw new Error(err.detail || `请求失败（${res.status}）`);
+    const authErr = handleUnauthorized(path, res.status, err.detail);
+    if (authErr) throw authErr;
+    const e = new Error(err.detail || `请求失败（${res.status}）`);
+    e.status = res.status;
+    throw e;
   }
   return res.json();
 }
@@ -22,6 +48,10 @@ export function logout(token) {
     method: "POST",
     headers: { Authorization: `Bearer ${token}` }
   }).catch(() => {});
+}
+
+export function fetchMe(token) {
+  return request("/me", { headers: { Authorization: `Bearer ${token}` } });
 }
 
 export function fetchLeaderboard(classId) {
@@ -198,6 +228,8 @@ export async function exportEvidenceZip(classId, token) {
   });
   if (!res.ok) {
     const err = await res.json().catch(() => ({}));
+    const authErr = handleUnauthorized("/export/evidence-zip", res.status, err.detail);
+    if (authErr) throw authErr;
     throw new Error(err.detail || "导出失败");
   }
   const blob = await res.blob();
@@ -349,19 +381,37 @@ export function startAssess(sid) {
 }
 
 // 发送一轮消息（可附带文件/图片，multipart），返回可读流（text/event-stream）
-export function sendAssess(sessionId, text, files = []) {
+export async function sendAssess(sessionId, text, files = []) {
   const form = new FormData();
   form.append("text", text);
   files.forEach((f) => form.append("files", f));
-  return fetch(`${API}/assess/${sessionId}/message`, {
+  const path = `/assess/${sessionId}/message`;
+  const res = await fetch(`${API}${path}`, {
     method: "POST",
     body: form
   });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    const authErr = handleUnauthorized(path, res.status, err.detail);
+    if (authErr) throw authErr;
+    const e = new Error(err.detail || `请求失败（${res.status}）`);
+    e.status = res.status;
+    throw e;
+  }
+  return res;
 }
 
 export function finishAssess(sessionId) {
   return request(`/assess/${sessionId}/finish`, { method: "POST" });
 }
+
+// 撤回一遍过对话到指定轮次：keepUsers = 保留的学生发言条数（不含开场轮）
+export const rewindAssess = (sessionId, keepUsers) =>
+  request(`/assess/${sessionId}/rewind`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ keep_users: keepUsers })
+  });
 
 // items: [{category,points,basis}]；filesByIndex: {0:[File,...],1:[File,...]} 按加分项上传证据
 export function submitAssess(sessionId, items, filesByIndex = {}) {

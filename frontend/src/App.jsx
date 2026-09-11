@@ -19,6 +19,7 @@ import {
   fetchAdmins,
   fetchClasses,
   fetchLeaderboard,
+  fetchMe,
   getAiSettings,
   importSecondClass,
   listAiModels,
@@ -28,9 +29,11 @@ import {
   manualAward,
   rejectAward,
   resetAiPrompts,
+  rewindAssess,
   saveAiPrompts,
   saveAiSettings,
   sendAssess,
+  setOnAuthExpired,
   startAssess,
   submitAwards,
   submitAssess,
@@ -42,11 +45,16 @@ import {
 import Modal from "./components/Modal.jsx";
 import Reveal from "./components/Reveal.jsx";
 import Dropdown from "./components/Dropdown.jsx";
+import DropZone from "./components/DropZone.jsx";
+import FileChips from "./components/FileChips.jsx";
+import TextField from "./components/TextField.jsx";
+import ThemeToggle from "./components/ThemeToggle.jsx";
 import { renderMd } from "./utils/markdown.js";
 
 const TOKEN_KEY = "token";
 const ROLE_KEY = "role";
 const MY_CLASS_KEY = "my_class_id";
+const CLASS_KEY = "sel_class_id"; // 访客看榜时选定的班级（榜单按班展示，需记住选择）
 const CATEGORIES = ["德育", "体育", "美育", "劳育", "附加分"];
 const CC_ROLES = [
   { role: "班长、团支书、辅导员助理", points: 8 },
@@ -65,10 +73,51 @@ function isImage(name) {
   return IMG_EXT.some((e) => name.toLowerCase().endsWith(e));
 }
 
+// 撤回后按服务端权威 items 重建本地加分项列表：以「栏目|分值|依据」三元组匹配，
+// 命中则保留本地已挂的 evidence/evServer/auto 字段，命中不了才新建
+// （不能用下标切片：auto_items 分支的客户端去重会让本地下标与后端错位）
+function rebuildPassItems(serverItems, localItems) {
+  const pool = [...localItems];
+  const key = (x) => `${x.category}|${Number(x.points) || 0}|${(x.basis || "").trim()}`;
+  return (serverItems || []).map((it) => {
+    const hit = pool.findIndex((x) => key(x) === key(it));
+    if (hit >= 0) return pool.splice(hit, 1)[0];
+    return { category: it.category, points: it.points, basis: it.basis, evidence: [], evServer: [] };
+  });
+}
+
+/** 一遍过「手动添加加分项」表单（未识别到加分项 / 已识别到多条两种状态下复用同一份） */
+function ManualItemForm({ value, onChange, onSubmit }) {
+  return (
+    <form className="assess-item-card" onSubmit={onSubmit}>
+      <select value={value.category} onChange={(e) => onChange({ ...value, category: e.target.value })}>
+        {CATEGORIES.map((c) => (
+          <option key={c} value={c}>{c}</option>
+        ))}
+      </select>
+      <input
+        type="number" step="0.5" min="0"
+        max={value.category === "附加分" ? 5 : 100}
+        value={value.points}
+        onChange={(e) => onChange({ ...value, points: e.target.value })}
+      />
+      <TextField
+        className="assess-basis"
+        placeholder="加分依据（引用原文条款）"
+        value={value.basis}
+        onChange={(e) => onChange({ ...value, basis: e.target.value })}
+      />
+      <button type="submit" className="btn small">添加</button>
+    </form>
+  );
+}
+
 function AwardCard({ award, token, onRefresh, onPreview }) {
   const [category, setCategory] = useState(award.category);
   const [points, setPoints] = useState(String(award.points));
   const [basis, setBasis] = useState(award.basis || "");
+  // 卡片默认折叠，仅展开后显示依据/证据/操作按钮（各卡片独立，key 为 award.id 故列表重渲染时保留）
+  const [expanded, setExpanded] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [confirmDel, setConfirmDel] = useState(false);
@@ -117,83 +166,122 @@ function AwardCard({ award, token, onRefresh, onPreview }) {
 
   return (
     <div className={`award-card ${statusClass}`}>
-      <div className="award-head">
-        <strong>{award.sid} {award.name}</strong>
-        <span className={`badge ${statusClass}`}>{statusText}</span>
+      {/* 头部整行可点：折叠时只暴露学号/姓名/栏目/分值 + 状态徽章 + 证据条数 */}
+      <div
+        className="award-head"
+        role="button"
+        tabIndex={0}
+        aria-expanded={expanded}
+        onClick={() => setExpanded((v) => !v)}
+        onKeyDown={(e) => {
+          if (e.key === "Enter" || e.key === " ") {
+            e.preventDefault(); // 避免空格滚动页面
+            setExpanded((v) => !v);
+          }
+        }}
+      >
+        <div className="award-head-main">
+          <strong>{award.sid} {award.name}</strong>
+          <span className="award-chip">{category}</span>
+          <span className="award-chip">加分 {points || 0}</span>
+          {award.evidence.length > 0 && <span className="award-chip muted">证据 {award.evidence.length}</span>}
+        </div>
+        <div className="award-head-side">
+          <span className={`badge ${statusClass}`}>{statusText}</span>
+          <svg
+            className="award-chevron"
+            width="16"
+            height="16"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="1.8"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            aria-hidden="true"
+          >
+            <path d="M6 9l6 6 6-6" />
+          </svg>
+        </div>
       </div>
-      <div className="award-body">
-        <div className="award-field">
-          <span>加分栏目</span>
-          <select value={category} onChange={(e) => setCategory(e.target.value)} disabled={!canEdit || award.approved !== "否"}>
-            {CATEGORIES.map((c) => (
-              <option key={c} value={c}>{c}</option>
-            ))}
-          </select>
-        </div>
-        <div className="award-field">
-          <span>加分分值</span>
-          <input
-            type="number"
-            step="0.5"
-            min="0"
-            value={points}
-            onChange={(e) => setPoints(e.target.value)}
-            disabled={!canEdit || award.approved !== "否"}
-          />
-        </div>
-        <div className="award-field">
-          <span>状态</span>
-          <span className="created-at">{award.created_at}</span>
-        </div>
-        <div className="award-field wide">
-          <span>加分依据</span>
-          <p>{award.basis || "（无）"}</p>
-        </div>
-        {isRejected && (
-          <div className="award-field wide">
-            <span>驳回理由</span>
-            <p className="reject-reason">{award.reject_reason || "（未填写）"}</p>
-          </div>
-        )}
-        <div className="award-field wide">
-          <span>证据文件</span>
-          <div className="evidence-list">
-            {award.evidence.length === 0 && <em>无</em>}
-            {award.evidence.map((f) =>
-              isImage(f) ? (
-                <div key={f} className="evidence-img">
-                  <img src={evidenceUrl(award.id, f)} alt={f} loading="lazy" onClick={() => onPreview(award.id, f)} title="点击放大预览" />
-                  <a href={evidenceUrl(award.id, f)} target="_blank" rel="noreferrer">原图 {f}</a>
-                </div>
-              ) : (
-                <a key={f} className="link" href={evidenceUrl(award.id, f)} target="_blank" rel="noreferrer">查看 {f}</a>
-              )
+      <div className="award-collapse" data-open={expanded ? "1" : "0"}>
+        <div className="award-collapse-inner">
+          <div className="award-body">
+            <div className="award-field">
+              <span>加分栏目</span>
+              <select value={category} onChange={(e) => setCategory(e.target.value)} disabled={!canEdit || award.approved !== "否"}>
+                {CATEGORIES.map((c) => (
+                  <option key={c} value={c}>{c}</option>
+                ))}
+              </select>
+            </div>
+            <div className="award-field">
+              <span>加分分值</span>
+              <input
+                type="number"
+                step="0.5"
+                min="0"
+                value={points}
+                onChange={(e) => setPoints(e.target.value)}
+                disabled={!canEdit || award.approved !== "否"}
+              />
+            </div>
+            <div className="award-field">
+              <span>状态</span>
+              <span className="created-at">{award.created_at}</span>
+            </div>
+            <div className="award-field wide">
+              <span>加分依据</span>
+              <p>{award.basis || "（无）"}</p>
+            </div>
+            {isRejected && (
+              <div className="award-field wide">
+                <span>驳回理由</span>
+                <p className="reject-reason">{award.reject_reason || "（未填写）"}</p>
+              </div>
             )}
+            <div className="award-field wide">
+              <span>证据文件</span>
+              <div className="evidence-list">
+                {award.evidence.length === 0 && <em>无</em>}
+                {award.evidence.map((f) =>
+                  isImage(f) ? (
+                    <div key={f} className="evidence-img">
+                      <img src={evidenceUrl(award.id, f)} alt={f} loading="lazy" onClick={() => onPreview(award.id, f)} title="点击放大预览" />
+                      <a href={evidenceUrl(award.id, f)} target="_blank" rel="noreferrer">原图 {f}</a>
+                    </div>
+                  ) : (
+                    <a key={f} className="link" href={evidenceUrl(award.id, f)} target="_blank" rel="noreferrer">查看 {f}</a>
+                  )
+                )}
+              </div>
+            </div>
           </div>
-        </div>
-      </div>
-      {error && <div className="error">{error}</div>}
-      <div className="award-actions">
-        {isRejected && (
-          // 驳回记录：任何人（申报人本人）可编辑后重新提交
-          <button className="btn small" disabled={busy} onClick={() => setEditOpen(true)}>编辑并重新提交</button>
-        )}
-        {canEdit && (
-          <>
-            {award.approved === "否" && (
+          {error && <div className="error">{error}</div>}
+          <div className="award-actions">
+            {isRejected && (
+              // 驳回记录：任何人（申报人本人）可编辑后重新提交
+              <button className="btn small" disabled={busy} onClick={() => setEditOpen(true)}>编辑并重新提交</button>
+            )}
+            {canEdit && (
               <>
-                <button className="btn small" disabled={busy} onClick={() => act("approve")}>通过</button>
-                <button className="btn small danger" disabled={busy} onClick={() => setRejectOpen(true)}>驳回</button>
+                {award.approved === "否" && (
+                  <>
+                    <button className="btn small" disabled={busy} onClick={() => act("approve")}>通过</button>
+                    <button className="btn small danger" disabled={busy} onClick={() => setRejectOpen(true)}>驳回</button>
+                  </>
+                )}
+                {award.approved === "是" && (
+                  <button className="btn small" disabled={busy} onClick={() => act("withdraw")}>撤回</button>
+                )}
+                <button className="btn small danger" disabled={busy} onClick={() => setConfirmDel(true)}>删除</button>
               </>
             )}
-            {award.approved === "是" && (
-              <button className="btn small" disabled={busy} onClick={() => act("withdraw")}>撤回</button>
-            )}
-            <button className="btn small ghost" disabled={busy} onClick={() => setConfirmDel(true)}>删除</button>
-          </>
-        )}
+          </div>
+        </div>
       </div>
 
+      {/* 弹窗保持在最外层（不放进折叠容器，避免收起时被 visibility:hidden 隐藏） */}
       <Modal
         open={rejectOpen}
         title={`驳回申报（${award.sid} ${award.name}）`}
@@ -204,8 +292,9 @@ function AwardCard({ award, token, onRefresh, onPreview }) {
         onCancel={() => { setRejectOpen(false); setRejectReason(""); }}
       >
         <label className="form-label">驳回理由 *（将展示给申报人，便于修改后重新提交）</label>
-        <textarea
-          className="assess-basis modal-textarea"
+        <TextField
+          multiline
+          className="modal-textarea"
           rows={3}
           value={rejectReason}
           onChange={(e) => setRejectReason(e.target.value)}
@@ -245,7 +334,7 @@ function AwardCard({ award, token, onRefresh, onPreview }) {
         </div>
         <div className="award-field wide">
           <span>加分依据</span>
-          <textarea value={basis} onChange={(e) => setBasis(e.target.value)} rows={3} />
+          <TextField multiline rows={3} value={basis} onChange={(e) => setBasis(e.target.value)} />
         </div>
         {award.evidence.length > 0 && (
           <div className="award-field wide">
@@ -274,16 +363,11 @@ function AwardCard({ award, token, onRefresh, onPreview }) {
             }}
           />
         </label>
-        {editFiles.length > 0 && (
-          <div className="chat-attach-preview">
-            {editFiles.map((f, fi) => (
-              <span key={fi} className="file-chip">
-                {f.name}
-                <button type="button" className="chip-x" onClick={() => setEditFiles((prev) => prev.filter((_, i) => i !== fi))}>×</button>
-              </span>
-            ))}
-          </div>
-        )}
+        <FileChips
+          files={editFiles}
+          className="chat-attach-preview"
+          onRemove={(i) => setEditFiles((prev) => prev.filter((_, j) => j !== i))}
+        />
       </Modal>
 
       <Modal
@@ -329,7 +413,7 @@ function DraftCard({ draft, submitting, onChangeItem, onRemoveItem, onSubmit, on
             className="draft-points"
             onChange={(e) => onChangeItem(draft.draft_id, idx, { points: e.target.value })}
           />
-          <input
+          <TextField
             className="draft-basis"
             value={it.basis}
             placeholder="加分依据"
@@ -384,23 +468,32 @@ export default function App() {
   const [role, setRole] = useState(localStorage.getItem(ROLE_KEY) || "");
   const [myClassId, setMyClassId] = useState(localStorage.getItem(MY_CLASS_KEY) || "");
   const [tab, setTab] = useState("board");
-  const [showLogin, setShowLogin] = useState(false);
+  const [loginOpen, setLoginOpen] = useState(false);
+  const [loginNotice, setLoginNotice] = useState("");
   const [mounted, setMounted] = useState(false);
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
+  // 登录弹窗：字段级行内错误、提交中标记（服务端错误仍走 error/loginNotice）
+  const [loginFieldErr, setLoginFieldErr] = useState({});
+  const [loginBusy, setLoginBusy] = useState(false);
   const [students, setStudents] = useState([]);
   const [meta, setMeta] = useState({});
   const [classes, setClasses] = useState([]);
-  const [classSel, setClassSel] = useState("");
+  const [classSel, setClassSel] = useState(localStorage.getItem(CLASS_KEY) || "");
+  const [guideClass, setGuideClass] = useState(""); // 未选班级时引导卡片里的待选班级
   const [loading, setLoading] = useState(false);
   const [uploading, setUploading] = useState(false);
+  const [importOpen, setImportOpen] = useState(false);
+  const [importErr, setImportErr] = useState("");
   const [uploadClassId, setUploadClassId] = useState("");
   const [awards, setAwards] = useState([]);
+  const [awardsLoading, setAwardsLoading] = useState(false);
   const [awardQuery, setAwardQuery] = useState("");
   const [awardCategory, setAwardCategory] = useState("");
   const [awardStatus, setAwardStatus] = useState("");
-  const fileRef = useRef(null);
+  // 审批列表分批渲染：首屏 4 条，点「显示更多」每次 +4（筛选/班级/Tab 变化时重置）
+  const [visibleCount, setVisibleCount] = useState(4);
 
   const [newClassName, setNewClassName] = useState("");
   const [adminsList, setAdminsList] = useState([]);
@@ -409,13 +502,16 @@ export default function App() {
   const [newAdminClass, setNewAdminClass] = useState("");
   const [manageMsg, setManageMsg] = useState(null);
   const [clearClassTarget, setClearClassTarget] = useState(null);
+  const [deleteClassTarget, setDeleteClassTarget] = useState(null);
+  const [deleteAdminTarget, setDeleteAdminTarget] = useState(null);
   const [evidenceZipClass, setEvidenceZipClass] = useState("");
   const [zipping, setZipping] = useState(false);
+  const [scOpen, setScOpen] = useState(false);
   const [scClassId, setScClassId] = useState("");
   const [scThreshold, setScThreshold] = useState("2");
   const [scFile, setScFile] = useState(null);
   const [scBusy, setScBusy] = useState(false);
-  const scFileRef = useRef(null);
+  const [scMsg, setScMsg] = useState(null);
 
   const [applyType, setApplyType] = useState("ai");
   const [applySid, setApplySid] = useState("");
@@ -442,7 +538,12 @@ export default function App() {
   const [passNoEvItems, setPassNoEvItems] = useState([]);
   const [manualOpen, setManualOpen] = useState(false);
   const [manualItem, setManualItem] = useState({ category: "德育", points: "1", basis: "" });
+  const [recallIdx, setRecallIdx] = useState(null); // 哪个用户气泡正显示撤回符号（null=无）
+  const [recallTarget, setRecallTarget] = useState(null); // 待确认撤回的气泡下标（null=无）
+  const [recalling, setRecalling] = useState(false); // 撤回请求进行中
   const chatBoxRef = useRef(null);
+  const passInputRef = useRef(null); // 一遍过输入框（撤回后聚焦）
+  const boardSeq = useRef(0); // 榜单请求序号：快速切班时丢弃先发后到的旧响应
 
   const [ccSid, setCcSid] = useState("");
   const [ccRole, setCcRole] = useState(CC_ROLES[0].role);
@@ -472,6 +573,7 @@ export default function App() {
   const [aiModels, setAiModels] = useState([]);
   const [aiMsg, setAiMsg] = useState(null);
   const [aiBusy, setAiBusy] = useState(false);
+  const [aiAct, setAiAct] = useState(""); // 当前进行中的 AI 设置操作（save/test/models/prompts/reset），用于按钮 spinner
   const [promptViews, setPromptViews] = useState({});
 
   const [batchSids, setBatchSids] = useState("");
@@ -485,20 +587,41 @@ export default function App() {
   const [uploadMsg, setUploadMsg] = useState(null);
 
   async function loadBoard(cid) {
+    // 榜单按班级展示：未选班级一律不发请求，避免拿到后端跨班合并的榜单
+    if (!cid) {
+      boardSeq.current += 1; // 作废在途请求的结果
+      setStudents([]);
+      setMeta({});
+      setLoading(false);
+      return;
+    }
+    const my = ++boardSeq.current;
     setLoading(true);
     setError("");
     try {
       const data = await fetchLeaderboard(cid);
+      if (my !== boardSeq.current) return; // 已有更新的请求发出（快速切班），丢弃本次旧响应
       setStudents(data.students || []);
       setMeta(data.meta || {});
     } catch (err) {
+      if (my !== boardSeq.current) return;
       setError(err.message);
     } finally {
-      setLoading(false);
+      if (my === boardSeq.current) setLoading(false);
     }
   }
 
+  // 切班的唯一入口：先清空上一班数据（防止竞态下旧行残留），再切换并记住选择
+  function handlePickClass(id) {
+    if (!id || id === classSel) return;
+    setStudents([]);
+    setMeta({});
+    setClassSel(id);
+    localStorage.setItem(CLASS_KEY, id);
+  }
+
   async function loadAwards() {
+    setAwardsLoading(true);
     setError("");
     try {
       const filter = role === "admin" ? myClassId : classSel;
@@ -506,15 +629,28 @@ export default function App() {
       setAwards(data.awards || []);
     } catch (err) {
       setError(err.message);
+    } finally {
+      setAwardsLoading(false);
     }
   }
 
   async function loadClasses() {
     try {
       const d = await fetchClasses();
-      setClasses(d.classes || []);
-      setClassSel((prev) => prev || (d.classes[0] ? d.classes[0].id : ""));
-      setUploadClassId((prev) => prev || (role === "admin" && myClassId) || (d.classes[0] ? d.classes[0].id : ""));
+      const list = d.classes || [];
+      setClasses(list);
+      // 选班兜底（榜单必须带 class_id，不能靠后端合并）：admin 固定本班（不问）；
+      // root 用「已存且仍存在」的班级，否则第一个班（root 可自由切换）；
+      // 未登录只认本地存过且仍存在的班级，没存过就保持空 → 由榜单页引导卡片询问
+      setClassSel((prev) => {
+        const cur = prev || localStorage.getItem(CLASS_KEY) || "";
+        if (cur && list.some((c) => c.id === cur)) return cur;
+        if (role === "admin" && myClassId && list.some((c) => c.id === myClassId)) return myClassId;
+        if (role === "root" && list[0]) return list[0].id;
+        return "";
+      });
+      // 导入目标班级：admin 固定本班；root 不预填，必须显式选择（避免拖入时误导入到第一个班级）
+      setUploadClassId((prev) => prev || (role === "admin" ? myClassId : ""));
     } catch (err) {
       setError(err.message);
     }
@@ -530,6 +666,25 @@ export default function App() {
     }
   }
 
+  // 注册会话失效回调：任何带 token 的请求返回 401 时自动登出并弹登录窗
+  useEffect(() => {
+    setOnAuthExpired(expireSession);
+  }, []);
+
+  // 刷新页面时用 token 换取真实 role/班级，避免 localStorage 里的旧值过期
+  useEffect(() => {
+    const saved = localStorage.getItem(TOKEN_KEY);
+    if (!saved) return;
+    fetchMe(saved)
+      .then((r) => {
+        localStorage.setItem(ROLE_KEY, r.role);
+        localStorage.setItem(MY_CLASS_KEY, r.class_id || "");
+        setRole(r.role);
+        setMyClassId(r.class_id || "");
+      })
+      .catch(() => {});
+  }, []);
+
   useEffect(() => {
     loadClasses().then(() => setMounted(true));
   }, [token, role, myClassId]);
@@ -543,6 +698,11 @@ export default function App() {
   useEffect(() => {
     if (tab === "manage" && role === "root") loadAdmins();
   }, [tab, token, role]);
+
+  // 筛选条件（关键词/栏目/状态）、班级或 Tab 变化时重置分批数量，避免切换后一次显示很长一截
+  useEffect(() => {
+    setVisibleCount(4);
+  }, [awardQuery, awardCategory, awardStatus, classSel, tab]);
 
   // 一遍过聊天区：新内容到达后自动滚动到底部（窗口高度固定不随内容变化）
   useEffect(() => {
@@ -590,6 +750,7 @@ export default function App() {
   async function handleAiSave(e) {
     e.preventDefault();
     setAiBusy(true);
+    setAiAct("save");
     setAiMsg(null);
     setError("");
     try {
@@ -619,11 +780,13 @@ export default function App() {
       setAiMsg({ type: "err", text: err.message });
     } finally {
       setAiBusy(false);
+      setAiAct("");
     }
   }
 
   async function handleAiTest() {
     setAiBusy(true);
+    setAiAct("test");
     setAiMsg(null);
     try {
       const d = await testAi(
@@ -639,11 +802,13 @@ export default function App() {
       setAiMsg({ type: "err", text: err.message });
     } finally {
       setAiBusy(false);
+      setAiAct("");
     }
   }
 
   async function handleAiModels() {
     setAiBusy(true);
+    setAiAct("models");
     setAiMsg(null);
     try {
       const d = await listAiModels(
@@ -660,11 +825,13 @@ export default function App() {
       setAiMsg({ type: "err", text: err.message });
     } finally {
       setAiBusy(false);
+      setAiAct("");
     }
   }
 
   async function handleSavePrompts() {
     setAiBusy(true);
+    setAiAct("prompts");
     setAiMsg(null);
     try {
       await saveAiPrompts(aiPrompts, token);
@@ -673,11 +840,13 @@ export default function App() {
       setAiMsg({ type: "err", text: err.message });
     } finally {
       setAiBusy(false);
+      setAiAct("");
     }
   }
 
   async function handleResetPrompts() {
     setAiBusy(true);
+    setAiAct("reset");
     setAiMsg(null);
     try {
       const d = await resetAiPrompts(token);
@@ -687,6 +856,7 @@ export default function App() {
       setAiMsg({ type: "err", text: err.message });
     } finally {
       setAiBusy(false);
+      setAiAct("");
     }
   }
 
@@ -702,10 +872,40 @@ export default function App() {
       setRole(data.role || "");
       setMyClassId(data.class_id || "");
       setPassword("");
-      setShowLogin(false);
+      setLoginOpen(false);
     } catch (err) {
       setError(err.message);
     }
+  }
+
+  // 登录表单提交：先做字段级非空校验（不发请求），通过后再交给 handleLogin。
+  // 注意：管理员密码可能短于 6 位，这里只校验非空，不做长度限制。
+  async function handleLoginSubmit(e) {
+    e.preventDefault();
+    const errs = {};
+    if (!username.trim()) errs.username = "请输入账号";
+    if (!password) errs.password = "请输入密码";
+    setLoginFieldErr(errs);
+    if (errs.username || errs.password) return;
+    setLoginBusy(true);
+    try {
+      await handleLogin(e);
+    } finally {
+      setLoginBusy(false);
+    }
+  }
+
+  // 会话失效（token 过期或已失效）：清本地登录态、退回公开榜单并弹登录窗提示
+  function expireSession(msg) {
+    localStorage.removeItem(TOKEN_KEY);
+    localStorage.removeItem(ROLE_KEY);
+    localStorage.removeItem(MY_CLASS_KEY);
+    setToken("");
+    setRole("");
+    setMyClassId("");
+    setTab((t) => (t === "manage" || t === "ai" ? "board" : t));
+    setLoginNotice(msg || "登录已过期，请重新登录");
+    setLoginOpen(true);
   }
 
   function handleLogout() {
@@ -716,34 +916,38 @@ export default function App() {
     setToken("");
     setRole("");
     setMyClassId("");
-    setShowLogin(false);
+    setLoginNotice("");
   }
 
-  async function handleUpload(e) {
-    const file = e.target.files[0];
+  async function handleUpload(file) {
     if (!file) return;
-    const targetClass = uploadClassId || (role === "admin" ? myClassId : classes[0]?.id);
+    // 目标班级必须明确：admin 固定导入本班，root 必须显式选择（避免拖入即静默导入到第一个班级）
+    const targetClass = role === "admin" ? myClassId : uploadClassId;
     if (!targetClass) {
-      setError("请先创建班级");
+      setImportErr(role === "admin" ? "请先创建班级" : "请先选择目标班级");
       return;
     }
     setUploading(true);
-    setError("");
+    setImportErr("");
     try {
       const res = await uploadXlsx(file, token, targetClass);
       await loadClasses();
       await loadBoard(classSel);
       setUploadMsg(`导入成功：${res.students} 名学生，${res.rows} 条课程记录`);
     } catch (err) {
-      setError(err.message);
+      setImportErr(err.message);
     } finally {
       setUploading(false);
-      if (fileRef.current) fileRef.current.value = "";
     }
   }
 
   async function handleExport() {
     setError("");
+    // 榜单按班级导出：未选班级不导出，避免把跨班合并榜单导成「某班」文件
+    if (!classSel) {
+      setError("请先选择班级");
+      return;
+    }
     try {
       await exportExcel(classSel);
     } catch (err) {
@@ -813,28 +1017,27 @@ export default function App() {
   async function handleImportSecondClass(e) {
     e.preventDefault();
     if (!scFile) {
-      setManageMsg({ type: "err", text: "请选择第二课堂统计 xlsx 文件" });
+      setScMsg({ type: "err", text: "请选择第二课堂统计 xlsx 文件" });
       return;
     }
     const target = scClassId || (role === "admin" ? myClassId : "");
     if (!target) {
-      setManageMsg({ type: "err", text: "请选择班级" });
+      setScMsg({ type: "err", text: "请选择班级" });
       return;
     }
     const threshold = parseFloat(scThreshold) || 0;
-    setManageMsg(null);
+    setScMsg(null);
     setScBusy(true);
     try {
       const res = await importSecondClass(scFile, token, target, threshold);
-      setManageMsg({
+      setScMsg({
         type: "ok",
         text: `导入完成：${res.qualified} 人达标（学分≥${res.threshold}），已对 ${res.applied} 人德育 +10 分；重复导入自动先撤后加，不会重复累加。${res.skipped && res.skipped.length ? `跳过 ${res.skipped.length} 个不在本班榜单的学号。` : ""}`,
       });
       setScFile(null);
-      if (scFileRef.current) scFileRef.current.value = "";
       await loadBoard(classSel);
     } catch (err) {
-      setManageMsg({ type: "err", text: err.message });
+      setScMsg({ type: "err", text: err.message });
     } finally {
       setScBusy(false);
     }
@@ -906,6 +1109,8 @@ export default function App() {
       setPassAttach([]);
       setPassDone(false);
       setPassEnded(false);
+      setRecallIdx(null);
+      setRecallTarget(null);
       // 自动发送「开始」让 AI 提第一个问题（流式）
       await sendPassMsg(data.session_id, "开始");
     } catch (err) {
@@ -917,7 +1122,7 @@ export default function App() {
   async function handlePassQuick(text) {
     if (passBusy || passEnded || !passSess) return;
     setPassInput("");
-    setPassMsgs((prev) => [...prev, { role: "user", text }]);
+    setPassMsgs((prev) => [...prev, { role: "user", text, files: [], fileObjs: [] }]);
     await sendPassMsg(passSess.session_id, text, []);
   }
 
@@ -928,15 +1133,15 @@ export default function App() {
     const files = passAttach;
     setPassInput("");
     setPassAttach([]);
-    setPassMsgs((prev) => [...prev, { role: "user", text, files: files.map((f) => f.name) }]);
+    // fileObjs 留一份原始 File 对象，撤回时可放回输入区重新发送
+    setPassMsgs((prev) => [...prev, { role: "user", text, files: files.map((f) => f.name), fileObjs: files }]);
     await sendPassMsg(passSess.session_id, text, files);
   }
 
-  function onPassAttach(e) {
-    const files = Array.from(e.target.files || []).slice(0, 5);
+  function addPassAttach(fileList) {
+    const files = Array.from(fileList || []).slice(0, 5);
     if (!files.length) return;
     setPassAttach((prev) => [...prev, ...files].slice(0, 5));
-    e.target.value = "";
   }
 
   async function sendPassMsg(sessionId, text, files = []) {
@@ -1028,6 +1233,34 @@ export default function App() {
       setPassEnded(true);
     } catch (err) {
       setPassErr(err.message);
+    }
+  }
+
+  // 撤回某条用户发言：删除该条及其后所有对话，并让 AI 撤销相应的加分项
+  async function handlePassRecall(idx) {
+    if (passBusy || recalling || !passSess) return;
+    // keepUsers = 该条之前（不含该条）的学生发言条数，即需要保留的轮数
+    const keepUsers = passMsgs.slice(0, idx).filter((m) => m.role === "user").length;
+    const clicked = passMsgs[idx];
+    setRecalling(true);
+    setPassErr("");
+    setPassWarn("");
+    try {
+      const res = await rewindAssess(passSess.session_id, keepUsers);
+      setPassMsgs((prev) => prev.slice(0, idx));
+      setPassItems((prev) => rebuildPassItems(res.items, prev));
+      setPassDone(!!res.done);
+      setPassEnded(!!res.ended);
+      // 把被撤回的发言放回输入区，便于改一改再发（附件无法从服务端找回，用本地存的 File 对象）
+      setPassInput(clicked && clicked.text !== "开始" ? clicked.text || "" : "");
+      setPassAttach((clicked && clicked.fileObjs) || []);
+      setRecallIdx(null);
+      setRecallTarget(null);
+      passInputRef.current?.focus();
+    } catch (err) {
+      setPassErr(err.message);
+    } finally {
+      setRecalling(false);
     }
   }
 
@@ -1234,7 +1467,7 @@ export default function App() {
         token
       );
       setAdjResult(data.changed);
-      await loadBoard();
+      await loadBoard(classSel);
     } catch (err) {
       setError(err.message);
     } finally {
@@ -1339,39 +1572,17 @@ export default function App() {
           </span>
         </div>
         <div className="actions">
+          <ThemeToggle />
           <button className="btn" onClick={handleExport}>导出 Excel</button>
           {token ? (
             <button className="btn ghost" onClick={handleLogout}>退出登录</button>
           ) : (
-            <button className="btn" onClick={() => setShowLogin(!showLogin)}>
-              {showLogin ? "取消" : "管理员登录"}
+            <button className="btn" onClick={() => { setLoginNotice(""); setError(""); setLoginOpen(true); }}>
+              管理员登录
             </button>
           )}
         </div>
       </header>
-
-      {showLogin && !token && (
-        <form className="login-card inline" onSubmit={handleLogin}>
-          <h2>管理员登录</h2>
-          <label>账号</label>
-          <input
-            value={username}
-            onChange={(e) => setUsername(e.target.value)}
-            placeholder="请输入管理员账号"
-            autoComplete="username"
-          />
-          <label>密码</label>
-          <input
-            type="password"
-            value={password}
-            onChange={(e) => setPassword(e.target.value)}
-            placeholder="请输入管理员密码"
-            autoComplete="current-password"
-          />
-          {error && <div className="error">{error}</div>}
-          <button type="submit" className="primary">登 录</button>
-        </form>
-      )}
 
       <nav className="tabs">
         <button className={tab === "board" ? "tab active" : "tab"} onClick={() => switchTab("board")}>榜单</button>
@@ -1390,11 +1601,11 @@ export default function App() {
 
       <datalist id="student-list">
         {students.map((s) => (
-          <option key={s.sid} value={s.sid}>{s.name}</option>
+          <option key={`${s.class_id || ""}:${s.sid}`} value={s.sid}>{s.name}</option>
         ))}
       </datalist>
 
-      {error && !showLogin && <div className="error bar">{error}</div>}
+      {error && !loginOpen && <div className="error bar">{error}</div>}
 
       <main>
         {tab === "pass" && (
@@ -1405,7 +1616,7 @@ export default function App() {
                 <label>当前班级</label>
                 <Dropdown
                   value={classSel}
-                  onChange={setClassSel}
+                  onChange={handlePickClass}
                   options={classes.map((c) => ({ value: c.id, label: c.name }))}
                   placeholder="选择班级"
                 />
@@ -1429,14 +1640,14 @@ export default function App() {
                   </div>
                   <form className="apply-form" onSubmit={handlePassStart}>
                     <label>学号 *</label>
-                    <input
+                    <TextField
                       list="student-list"
                       value={passSid}
                       onChange={(e) => setPassSid(e.target.value)}
                       placeholder="如 251184Y313"
                     />
                     <button type="submit" className="btn primary-btn">
-                      {passBusy ? "准备中…" : "开始一遍过"}
+                      {passBusy ? <><span className="spin" /> 准备中…</> : "开始一遍过"}
                     </button>
                   </form>
                 </>
@@ -1453,8 +1664,33 @@ export default function App() {
                   <div className="chat-box" ref={chatBoxRef}>
                     {passMsgs.length === 0 && <p className="hint">正在等待 AI 提问…</p>}
                     {passMsgs.map((m, i) => (
-                      <div key={i} className={`chat-msg ${m.role}`}>
-                        <div className="chat-bubble">
+                      <div key={i} className={`chat-msg ${m.role}${m.role === "user" && recallIdx === i ? " recall-open" : ""}`}>
+                        {/* 撤回按钮常驻渲染，由 CSS 在「悬停整行 / 键盘聚焦 / 触屏点击固定」时显示。
+                            recallIdx 仅作触屏兜底（无 hover 设备点气泡=常驻）。
+                            流式输出中不渲染：此时撤回会把后续增量拼到已删除的消息上。 */}
+                        {m.role === "user" && !passBusy && (
+                          <button
+                            type="button"
+                            className="chat-undo"
+                            title="撤回这条发言及其后的对话"
+                            onClick={(e) => { e.stopPropagation(); setRecallTarget(i); }}
+                          >↺ 撤回</button>
+                        )}
+                        <div
+                          className="chat-bubble"
+                          role={m.role === "user" ? "button" : undefined}
+                          tabIndex={m.role === "user" ? 0 : undefined}
+                          onClick={m.role === "user" ? () => !passBusy && setRecallIdx(recallIdx === i ? null : i) : undefined}
+                          onKeyDown={
+                            m.role === "user"
+                              ? (e) => {
+                                  if (e.key !== "Enter" && e.key !== " ") return;
+                                  e.preventDefault();
+                                  if (!passBusy) setRecallIdx(recallIdx === i ? null : i);
+                                }
+                              : undefined
+                          }
+                        >
                           {m.role === "ai" ? (
                             <div
                               className="markdown-body chat-md"
@@ -1500,8 +1736,19 @@ export default function App() {
                       onClick={() => handlePassQuick("继续")}
                     >继续</button>
                   </div>
+                  {passSess && !passEnded && (
+                    <DropZone
+                      className="slim"
+                      multiple
+                      disabled={passBusy}
+                      title="拖入图片 / 文件，或点击选择（最多 5 个）"
+                      hint=""
+                      onFiles={addPassAttach}
+                    />
+                  )}
                   <form className="apply-form chat-form" onSubmit={handlePassSend}>
-                    <input
+                    <TextField
+                      ref={passInputRef}
                       value={passInput}
                       onChange={(e) => setPassInput(e.target.value)}
                       placeholder={
@@ -1515,25 +1762,16 @@ export default function App() {
                       }
                       disabled={passBusy || passEnded || !passSess}
                     />
-                    <label className="btn small ghost chat-attach-btn" title="上传图片/文件供 AI 识别">
-                      附件
-                      <input type="file" multiple hidden onChange={onPassAttach} disabled={passBusy || passEnded || !passSess} />
-                    </label>
                     <button
                       type="submit" className="btn small"
                       disabled={passBusy || passEnded || (!passInput.trim() && passAttach.length === 0)}
                     >{passDone && !passEnded ? "补充并结束" : "发送"}</button>
                   </form>
-                  {passAttach.length > 0 && (
-                    <div className="chat-attach-preview">
-                      {passAttach.map((f, fi) => (
-                        <span key={fi} className="file-chip">
-                          {f.name}
-                          <button type="button" className="chip-x" onClick={() => setPassAttach((prev) => prev.filter((_, i) => i !== fi))}>×</button>
-                        </span>
-                      ))}
-                    </div>
-                  )}
+                  <FileChips
+                    files={passAttach}
+                    className="chat-attach-preview"
+                    onRemove={(i) => setPassAttach((prev) => prev.filter((_, j) => j !== i))}
+                  />
 
                   {passItems.length === 0 && (
                     <div className="assess-items edit">
@@ -1544,29 +1782,7 @@ export default function App() {
                         </button>
                       </div>
                       {manualOpen && (
-                        <form className="assess-item-card" onSubmit={handleAddManualItem}>
-                          <select
-                            value={manualItem.category}
-                            onChange={(e) => setManualItem({ ...manualItem, category: e.target.value })}
-                          >
-                            {CATEGORIES.map((c) => (
-                              <option key={c} value={c}>{c}</option>
-                            ))}
-                          </select>
-                          <input
-                            type="number" step="0.5" min="0"
-                            max={manualItem.category === "附加分" ? 5 : 100}
-                            value={manualItem.points}
-                            onChange={(e) => setManualItem({ ...manualItem, points: e.target.value })}
-                          />
-                          <input
-                            className="assess-basis"
-                            placeholder="加分依据（引用原文条款）"
-                            value={manualItem.basis}
-                            onChange={(e) => setManualItem({ ...manualItem, basis: e.target.value })}
-                          />
-                          <button type="submit" className="btn small">添加</button>
-                        </form>
+                        <ManualItemForm value={manualItem} onChange={setManualItem} onSubmit={handleAddManualItem} />
                       )}
                     </div>
                   )}
@@ -1579,29 +1795,7 @@ export default function App() {
                         </button>
                       </div>
                       {manualOpen && (
-                        <form className="assess-item-card" onSubmit={handleAddManualItem}>
-                          <select
-                            value={manualItem.category}
-                            onChange={(e) => setManualItem({ ...manualItem, category: e.target.value })}
-                          >
-                            {CATEGORIES.map((c) => (
-                              <option key={c} value={c}>{c}</option>
-                            ))}
-                          </select>
-                          <input
-                            type="number" step="0.5" min="0"
-                            max={manualItem.category === "附加分" ? 5 : 100}
-                            value={manualItem.points}
-                            onChange={(e) => setManualItem({ ...manualItem, points: e.target.value })}
-                          />
-                          <input
-                            className="assess-basis"
-                            placeholder="加分依据（引用原文条款）"
-                            value={manualItem.basis}
-                            onChange={(e) => setManualItem({ ...manualItem, basis: e.target.value })}
-                          />
-                          <button type="submit" className="btn small">添加</button>
-                        </form>
+                        <ManualItemForm value={manualItem} onChange={setManualItem} onSubmit={handleAddManualItem} />
                       )}
                       {passItems.map((it, idx) => (
                         <div key={idx} className="assess-item-card">
@@ -1619,7 +1813,7 @@ export default function App() {
                             value={it.points}
                             onChange={(e) => updatePassItem(idx, { points: e.target.value })}
                           />
-                          <input
+                          <TextField
                             className="assess-basis"
                             value={it.basis}
                             onChange={(e) => updatePassItem(idx, { basis: e.target.value })}
@@ -1631,7 +1825,7 @@ export default function App() {
                               onChange={(e) => addPassItemFiles(idx, e.target.files)}
                             />
                           </label>
-                          <button className="btn small danger" onClick={() => removePassItem(idx)}>删</button>
+                          <button className="btn small danger" disabled={passBusy || submitting} onClick={() => removePassItem(idx)}>删</button>
                           {it.evidence && it.evidence.length > 0 && (
                             <div className="assess-evidence">
                               {it.evidence.map((f, fi) => (
@@ -1660,7 +1854,7 @@ export default function App() {
                   <div className="assess-actions">
                     {passItems.length > 0 && (
                       <button className="btn primary-btn" disabled={submitting} onClick={handlePassSubmit}>
-                        {submitting ? "提交中…" : `提交 ${passItems.length} 条为待审批申报`}
+                        {submitting ? <><span className="spin" /> 提交中…</> : `提交 ${passItems.length} 条为待审批申报`}
                       </button>
                     )}
                   </div>
@@ -1677,18 +1871,44 @@ export default function App() {
               </span>
               <button className="btn small" onClick={() => switchTab("pass")}>去加分一遍过 →</button>
             </div>
-            {classes.length > 1 && (
+            {classSel && classes.length > 1 && (
               <div className="class-bar">
                 <label>班级</label>
                 <Dropdown
                   value={classSel}
-                  onChange={setClassSel}
+                  onChange={handlePickClass}
                   options={classes.map((c) => ({ value: c.id, label: c.name }))}
                   placeholder="选择班级"
                 />
               </div>
             )}
-            {loading ? (
+            {!classSel ? (
+              // 未选班级（如未登录的访客）先询问班级：榜单按班展示，不能展示跨班合并的榜单
+              <div className="panel guide-card">
+                <h2>请选择要查看的班级</h2>
+                <p className="hint">榜单按班级分别展示。选择后会记住该班级，下次打开直接显示。</p>
+                {classes.length === 0 ? (
+                  <p className="hint">暂无班级数据，请联系管理员。</p>
+                ) : (
+                  <div className="class-bar">
+                    <label>班级</label>
+                    <Dropdown
+                      value={guideClass || classes[0].id}
+                      onChange={setGuideClass}
+                      options={classes.map((c) => ({ value: c.id, label: c.name }))}
+                      placeholder="选择班级"
+                    />
+                    <button
+                      type="button"
+                      className="btn primary-btn"
+                      onClick={() => handlePickClass(guideClass || classes[0].id)}
+                    >
+                      查看榜单
+                    </button>
+                  </div>
+                )}
+              </div>
+            ) : loading ? (
               <div className="loading">加载中…</div>
             ) : (
               <div className="table-wrap">
@@ -1710,7 +1930,7 @@ export default function App() {
                   <tbody>
                     {students.map((s) => (
                       <tr
-                        key={s.sid}
+                        key={`${s.class_id || ""}:${s.sid}`}
                         style={{ "--i": Math.max(s.rank - 1, 0) }}
                         className={`${s.rank > 0 && s.rank <= 3 ? `top top-${s.rank}` : ""}${s.rank === 0 ? " disq" : ""}`}
                       >
@@ -1740,7 +1960,7 @@ export default function App() {
               榜单公开查看；德育/美育/劳育默认 70（基础分），附加分默认 0，体育取体育课成绩。
               {token
                 ? "分数调整请使用「加分申报 → 分数调整」表单，支持正则批量选人并留痕。"
-                : "管理员登录后可在「加分申报」页导入 xlsx、批量加分和调整分数。"}
+                : "管理员登录后可在「管理」页导入 xlsx，在「加分申报」页批量加分和调整分数。"}
             </p>
           </>
         )}
@@ -1753,7 +1973,7 @@ export default function App() {
                 <label>当前班级</label>
                 <Dropdown
                   value={classSel}
-                  onChange={setClassSel}
+                  onChange={handlePickClass}
                   options={classes.map((c) => ({ value: c.id, label: c.name }))}
                   placeholder="选择班级"
                 />
@@ -1778,25 +1998,28 @@ export default function App() {
               <>
                 <form className="apply-form" onSubmit={handleAnalyze}>
                   <label>学号 *</label>
-                  <input
+                  <TextField
                     list="student-list"
                     value={applySid}
                     onChange={(e) => setApplySid(e.target.value)}
                     placeholder="如 251184Y313"
                   />
                   <label>情况描述</label>
-                  <textarea
+                  <TextField
+                    multiline
                     rows={4}
                     value={applyText}
                     onChange={(e) => setApplyText(e.target.value)}
                     placeholder="例如：获得2025年全国大学生电子设计竞赛省级二等奖，见证书图片；或：我担任班长，任职满六个月"
                   />
                   <label>上传证据（图片/文件，可多选）</label>
-                  <input
-                    type="file"
-                    multiple
+                  <DropZone
                     accept="image/*,.pdf,.doc,.docx"
-                    onChange={(e) => setApplyFiles(Array.from(e.target.files || []))}
+                    multiple
+                    className="compact"
+                    title="拖入证据文件，或点击选择"
+                    hint="支持图片 / PDF / Word，可多选"
+                    onFiles={(files) => setApplyFiles(Array.from(files || []))}
                   />
                   {applyFiles.length > 0 && (
                     <span className="file-count">已选 {applyFiles.length} 个文件</span>
@@ -1805,7 +2028,7 @@ export default function App() {
                     请尽量不要在北京时间周一至周五 9:00 - 12:00、14:00 - 18:00 使用该功能
                   </span>
                   <button type="submit" className="btn primary-btn" disabled={analyzing}>
-                    {analyzing ? "AI 分析中…" : "AI 分析"}
+                    {analyzing ? <><span className="spin" /> AI 分析中…</> : "AI 分析"}
                   </button>
                 </form>
                 {submitMsg && <div className="apply-result"><p className="hint">{submitMsg}</p></div>}
@@ -1838,7 +2061,7 @@ export default function App() {
               <>
                 <form className="apply-form" onSubmit={handleManual}>
                   <label>学号 *</label>
-                  <input
+                  <TextField
                     list="student-list"
                     value={formSid}
                     onChange={(e) => setFormSid(e.target.value)}
@@ -1860,22 +2083,25 @@ export default function App() {
                     onChange={(e) => setFormPoints(e.target.value)}
                   />
                   <label>加分依据 *</label>
-                  <textarea
+                  <TextField
+                    multiline
                     rows={3}
                     value={formBasis}
                     onChange={(e) => setFormBasis(e.target.value)}
                     placeholder="例如：获校级三好学生荣誉称号，加2分"
                   />
                   <label>上传证据（可选，图片/文件）</label>
-                  <input
-                    type="file"
-                    multiple
+                  <DropZone
                     accept="image/*,.pdf,.doc,.docx"
-                    onChange={(e) => setFormFiles(Array.from(e.target.files || []))}
+                    multiple
+                    className="compact"
+                    title="拖入证据文件，或点击选择"
+                    hint="支持图片 / PDF / Word，可多选"
+                    onFiles={(files) => setFormFiles(Array.from(files || []))}
                   />
                   {formFiles.length > 0 && <span className="file-count">已选 {formFiles.length} 个文件</span>}
                   <button type="submit" className="btn primary-btn" disabled={formBusy}>
-                    {formBusy ? "提交中…" : "提交申报"}
+                    {formBusy ? <><span className="spin" /> 提交中…</> : "提交申报"}
                   </button>
                 </form>
                 {formResult && (
@@ -1895,7 +2121,7 @@ export default function App() {
               <>
                 <form className="apply-form" onSubmit={handleClassCommittee}>
                   <label>学号 *</label>
-                  <input
+                  <TextField
                     list="student-list"
                     value={ccSid}
                     onChange={(e) => setCcSid(e.target.value)}
@@ -1909,7 +2135,7 @@ export default function App() {
                   </select>
                   <p className="hint">任职满六个月；班委加分计入德育板块。</p>
                   <button type="submit" className="btn primary-btn" disabled={ccBusy}>
-                    {ccBusy ? "提交中…" : "提交班委加分"}
+                    {ccBusy ? <><span className="spin" /> 提交中…</> : "提交班委加分"}
                   </button>
                 </form>
                 {ccResult && (
@@ -1929,7 +2155,8 @@ export default function App() {
               <>
                 <form className="apply-form" onSubmit={handleAdjust}>
                   <label>学号（可多个，支持正则，如 251184Y3.* 选全班）*</label>
-                  <textarea
+                  <TextField
+                    multiline
                     rows={2}
                     value={adjSids}
                     onChange={(e) => setAdjSids(e.target.value)}
@@ -1958,7 +2185,7 @@ export default function App() {
                     onChange={(e) => setAdjPoints(e.target.value)}
                   />
                   <button type="submit" className="btn primary-btn" disabled={adjBusy}>
-                    {adjBusy ? "调整中…" : "执行调整"}
+                    {adjBusy ? <><span className="spin" /> 调整中…</> : "执行调整"}
                   </button>
                 </form>
                 {adjResult && (
@@ -1978,7 +2205,8 @@ export default function App() {
               <>
                 <form className="apply-form" onSubmit={handleBatch}>
                   <label>学号（可多个，用逗号/空格/换行分隔）*</label>
-                  <textarea
+                  <TextField
+                    multiline
                     rows={3}
                     value={batchSids}
                     onChange={(e) => setBatchSids(e.target.value)}
@@ -2000,22 +2228,25 @@ export default function App() {
                     onChange={(e) => setBatchPoints(e.target.value)}
                   />
                   <label>加分依据 *</label>
-                  <textarea
+                  <TextField
+                    multiline
                     rows={3}
                     value={batchBasis}
                     onChange={(e) => setBatchBasis(e.target.value)}
                     placeholder="例如：校级优秀志愿者表彰（每生加3分）"
                   />
                   <label>证据文件（可选，多人共用）</label>
-                  <input
-                    type="file"
-                    multiple
+                  <DropZone
                     accept="image/*,.pdf,.doc,.docx"
-                    onChange={(e) => setBatchFiles(Array.from(e.target.files || []))}
+                    multiple
+                    className="compact"
+                    title="拖入证据文件，或点击选择"
+                    hint="支持图片 / PDF / Word，可多选"
+                    onFiles={(files) => setBatchFiles(Array.from(files || []))}
                   />
                   {batchFiles.length > 0 && <span className="file-count">已选 {batchFiles.length} 个文件</span>}
                   <button type="submit" className="btn primary-btn" disabled={batchBusy}>
-                    {batchBusy ? "提交中…" : "批量生成加分申报"}
+                    {batchBusy ? <><span className="spin" /> 提交中…</> : "批量生成加分申报"}
                   </button>
                 </form>
                 {batchResult && (
@@ -2042,7 +2273,7 @@ export default function App() {
                 <label>班级</label>
                 <Dropdown
                   value={classSel}
-                  onChange={setClassSel}
+                  onChange={handlePickClass}
                   options={classes.map((c) => ({ value: c.id, label: c.name }))}
                   placeholder="选择班级"
                 />
@@ -2087,16 +2318,27 @@ export default function App() {
               />
               <span className="file-count">共 {filteredAwards.length} 条</span>
             </div>
-            {awards.length === 0 ? (
+            {awardsLoading && awards.length === 0 ? (
+              <div className="loading">加载中…</div>
+            ) : awards.length === 0 ? (
               <p className="hint">暂无申报记录。</p>
             ) : filteredAwards.length === 0 ? (
               <p className="hint">没有符合筛选条件的申报。</p>
             ) : (
-              filteredAwards.map((a, i) => (
-                <Reveal key={a.id} delay={(i % 10) * 70}>
-                  <AwardCard award={a} token={token} onRefresh={() => { loadAwards(); loadBoard(); }} onPreview={(aid, f) => setPreview({ aid, file: f })} />
-                </Reveal>
-              ))
+              <>
+                {filteredAwards.slice(0, visibleCount).map((a, i) => (
+                  <Reveal key={a.id} delay={(i % 10) * 70}>
+                    <AwardCard award={a} token={token} onRefresh={() => { loadAwards(); loadBoard(classSel); }} onPreview={(aid, f) => setPreview({ aid, file: f })} />
+                  </Reveal>
+                ))}
+                {filteredAwards.length > visibleCount && (
+                  <div className="award-more">
+                    <button className="btn ghost" onClick={() => setVisibleCount((c) => c + 4)}>
+                      显示更多（剩余 {filteredAwards.length - visibleCount} 条）
+                    </button>
+                  </div>
+                )}
+              </>
             )}
           </div>
         )}
@@ -2106,62 +2348,23 @@ export default function App() {
             {manageMsg && <div className={`ai-msg ${manageMsg.type}`}>{manageMsg.text}</div>}
             <div className="ai-section">
               <h3>导入班级表格</h3>
-              <form className="apply-form" onSubmit={(e) => e.preventDefault()}>
-                {role === "root" ? (
-                  <>
-                    <label>目标班级 *</label>
-                    <Dropdown
-                      value={uploadClassId}
-                      onChange={setUploadClassId}
-                      options={classes.map((c) => ({ value: c.id, label: c.name }))}
-                      placeholder="选择班级"
-                    />
-                  </>
-                ) : (
-                  <p className="hint">你负责的班级：{classes.find((c) => c.id === myClassId)?.name || "（未分配）"}</p>
-                )}
-                <label>成绩 xlsx *</label>
-                <input ref={fileRef} type="file" accept=".xlsx" onChange={handleUpload} disabled={uploading} />
-                <span className="file-count">{uploading ? "导入中…" : "导入会替换该班级现有榜单数据"}</span>
-              </form>
+              <p className="hint">把成绩 xlsx 拖进导入窗口即可替换该班级的榜单数据。</p>
+              <button
+                className="btn primary-btn"
+                onClick={() => { setUploadMsg(""); setImportErr(""); setImportOpen(true); }}
+              >
+                打开导入窗口
+              </button>
             </div>
             <div className="ai-section">
               <h3>第二课堂导入</h3>
               <p className="hint">上传第二课堂统计 xlsx（含「学号」「学分」列），对学分达到阈值的学生德育加 10 分；未达标与名单外学生不变。同一班级重复导入会自动先撤销上次加的 10 分再按新文件重加，不会重复累加。</p>
-              <form className="apply-form" onSubmit={handleImportSecondClass}>
-                {role === "root" ? (
-                  <>
-                    <label>目标班级 *</label>
-                    <Dropdown
-                      value={scClassId}
-                      onChange={setScClassId}
-                      options={classes.map((c) => ({ value: c.id, label: c.name }))}
-                      placeholder="选择班级"
-                    />
-                  </>
-                ) : (
-                  <p className="hint">你负责的班级：{classes.find((c) => c.id === myClassId)?.name || "（未分配）"}</p>
-                )}
-                <label>达标阈值（学分 ≥ 阈值即达标）*</label>
-                <input
-                  type="number"
-                  step="0.1"
-                  min="0"
-                  value={scThreshold}
-                  onChange={(e) => setScThreshold(e.target.value)}
-                />
-                <label>第二课堂统计 xlsx *</label>
-                <input
-                  ref={scFileRef}
-                  type="file"
-                  accept=".xlsx"
-                  onChange={(e) => setScFile(e.target.files[0] || null)}
-                  disabled={scBusy}
-                />
-                <button type="submit" className="btn primary-btn" disabled={scBusy}>
-                  {scBusy ? "导入中…" : "导入并加分"}
-                </button>
-              </form>
+              <button
+                className="btn primary-btn"
+                onClick={() => { setScMsg(null); setScFile(null); setScOpen(true); }}
+              >
+                打开第二课堂导入窗口
+              </button>
             </div>
             <div className="ai-section">
               <h3>申报证据导出</h3>
@@ -2183,7 +2386,7 @@ export default function App() {
                 <p className="hint">你负责的班级：{classes.find((c) => c.id === myClassId)?.name || "（未分配）"}</p>
               )}
               <button type="button" className="btn primary-btn" onClick={handleExportZip} disabled={zipping || !token}>
-                {zipping ? "打包中…" : "导出证据 zip"}
+                {zipping ? <><span className="spin" /> 打包中…</> : "导出证据 zip"}
               </button>
             </div>
             {role === "root" && (
@@ -2201,14 +2404,19 @@ export default function App() {
                           disabled={c.students === 0}
                           onClick={() => setClearClassTarget({ id: c.id, name: c.name })}
                         >清除数据</button>
-                        <button className="btn small danger" disabled={c.students > 0} onClick={() => handleDeleteClass(c.id)} title={c.students > 0 ? "班级仍有学生，无法删除" : undefined}>删除</button>
+                        <button
+                          className="btn small danger"
+                          disabled={c.students > 0}
+                          onClick={() => setDeleteClassTarget({ id: c.id, name: c.name })}
+                          title={c.students > 0 ? "班级仍有学生，无法删除" : undefined}
+                        >删除</button>
                       </div>
                     ))}
                     {classes.length === 0 && <p className="hint">暂无班级。</p>}
                   </div>
                   <form className="apply-form" onSubmit={handleCreateClass}>
                     <label>新增班级名称 *</label>
-                    <input value={newClassName} onChange={(e) => setNewClassName(e.target.value)} placeholder="如 251185Y3" />
+                    <TextField value={newClassName} onChange={(e) => setNewClassName(e.target.value)} placeholder="如 251185Y3" />
                     <button type="submit" className="btn primary-btn">创建班级</button>
                   </form>
                 </div>
@@ -2222,14 +2430,14 @@ export default function App() {
                         <span className="badge">{a.role === "root" ? "root" : "管理员"}</span>
                         <span>{classes.find((c) => c.id === a.class_id)?.name || "全部班级"}</span>
                         {a.role !== "root" && (
-                          <button className="btn small danger" onClick={() => handleDeleteAdmin(a.username)}>删除</button>
+                          <button className="btn small danger" onClick={() => setDeleteAdminTarget(a.username)}>删除</button>
                         )}
                       </div>
                     ))}
                   </div>
                   <form className="apply-form" onSubmit={handleCreateAdmin}>
                     <label>用户名 *</label>
-                    <input value={newAdminUser} onChange={(e) => setNewAdminUser(e.target.value)} placeholder="3-32 位字母/数字/下划线" />
+                    <TextField value={newAdminUser} onChange={(e) => setNewAdminUser(e.target.value)} placeholder="3-32 位字母/数字/下划线" />
                     <label>初始密码 *</label>
                     <input type="password" value={newAdminPass} onChange={(e) => setNewAdminPass(e.target.value)} placeholder="至少 6 位" autoComplete="off" />
                     <label>负责班级 *</label>
@@ -2266,7 +2474,7 @@ export default function App() {
                       ))}
                     </select>
                     <label>Base URL *</label>
-                    <input
+                    <TextField
                       value={aiForm.base_url}
                       onChange={(e) => setAiForm({ ...aiForm, base_url: e.target.value })}
                       placeholder="https://api.deepseek.com"
@@ -2280,7 +2488,7 @@ export default function App() {
                       autoComplete="off"
                     />
                     <label>模型 *（标 ★ 为支持识图，加分申报需识图模型）</label>
-                    <input
+                    <TextField
                       list="ai-model-list"
                       value={aiForm.model}
                       onChange={(e) => setAiForm({ ...aiForm, model: e.target.value })}
@@ -2314,9 +2522,15 @@ export default function App() {
                       </>
                     )}
                     <div className="ai-actions">
-                      <button type="submit" className="btn primary-btn" disabled={aiBusy}>保存连接设置</button>
-                      <button type="button" className="btn" disabled={aiBusy} onClick={handleAiTest}>测试连接</button>
-                      <button type="button" className="btn ghost" disabled={aiBusy} onClick={handleAiModels}>获取模型列表</button>
+                      <button type="submit" className="btn primary-btn" disabled={aiBusy}>
+                        {aiAct === "save" && <span className="spin" />}保存连接设置
+                      </button>
+                      <button type="button" className="btn" disabled={aiBusy} onClick={handleAiTest}>
+                        {aiAct === "test" && <span className="spin" />}测试连接
+                      </button>
+                      <button type="button" className="btn ghost" disabled={aiBusy} onClick={handleAiModels}>
+                        {aiAct === "models" && <span className="spin" />}获取模型列表
+                      </button>
                     </div>
                   </form>
                 </div>
@@ -2349,7 +2563,8 @@ export default function App() {
                           dangerouslySetInnerHTML={{ __html: renderMd(aiPrompts[stage]) }}
                         />
                       ) : (
-                        <textarea
+                        <TextField
+                          multiline
                           className="mono"
                           rows={stage === "stage2" || stage === "stage3" ? 14 : 10}
                           value={aiPrompts[stage]}
@@ -2359,8 +2574,12 @@ export default function App() {
                     </div>
                   ))}
                   <div className="ai-actions">
-                    <button className="btn primary-btn" disabled={aiBusy} onClick={handleSavePrompts}>保存提示词</button>
-                    <button className="btn ghost" disabled={aiBusy} onClick={handleResetPrompts}>恢复默认提示词</button>
+                    <button className="btn primary-btn" disabled={aiBusy} onClick={handleSavePrompts}>
+                      {aiAct === "prompts" && <span className="spin" />}保存提示词
+                    </button>
+                    <button className="btn ghost" disabled={aiBusy} onClick={handleResetPrompts}>
+                      {aiAct === "reset" && <span className="spin" />}恢复默认提示词
+                    </button>
                   </div>
                 </div>
               </>
@@ -2380,13 +2599,162 @@ export default function App() {
       />
 
       <Modal
-        open={!!uploadMsg}
-        title="导入成功"
-        message={uploadMsg}
-        confirmText="知道了"
-        showCancel={false}
-        onConfirm={() => setUploadMsg(null)}
+        open={!!deleteClassTarget}
+        title="删除班级"
+        message={`确认删除班级 ${deleteClassTarget ? deleteClassTarget.name : ""}？该班学生、申报记录与已上传的证据文件将一并删除，不可恢复。`}
+        danger
+        confirmText="删除"
+        onConfirm={() => { const target = deleteClassTarget; setDeleteClassTarget(null); handleDeleteClass(target.id); }}
+        onCancel={() => setDeleteClassTarget(null)}
       />
+
+      <Modal
+        open={!!deleteAdminTarget}
+        title="删除管理员账号"
+        message={`确认删除管理员账号 ${deleteAdminTarget || ""}？删除后该账号立即失效（已登录的会话也会被一并登出），不可恢复。`}
+        danger
+        confirmText="删除"
+        onConfirm={() => { const name = deleteAdminTarget; setDeleteAdminTarget(null); handleDeleteAdmin(name); }}
+        onCancel={() => setDeleteAdminTarget(null)}
+      />
+
+      <Modal
+        open={loginOpen}
+        sheetClass="login-sheet"
+        title="管理员登录"
+        showConfirm={false}
+        cancelText="取消"
+        onCancel={() => { setLoginOpen(false); setPassword(""); setError(""); setLoginFieldErr({}); }}
+      >
+        <form className="login-form" onSubmit={handleLoginSubmit} noValidate>
+          {loginNotice && <div className="login-server-error warn" role="alert">{loginNotice}</div>}
+          {error && <div className="login-server-error" role="alert">{error}</div>}
+
+          <div className="login-field">
+            <label className="login-label" htmlFor="login-username">账号</label>
+            <TextField
+              id="login-username"
+              className={`login-input${loginFieldErr.username ? " invalid" : ""}`}
+              value={username}
+              onChange={(e) => {
+                setUsername(e.target.value);
+                if (loginFieldErr.username) setLoginFieldErr({ ...loginFieldErr, username: "" });
+              }}
+              placeholder="请输入管理员账号"
+              autoComplete="username"
+              aria-invalid={loginFieldErr.username ? "true" : undefined}
+              data-autofocus
+            />
+            {loginFieldErr.username && <span className="login-field-error" role="alert">{loginFieldErr.username}</span>}
+          </div>
+
+          <div className="login-field">
+            <label className="login-label" htmlFor="login-password">密码</label>
+            <TextField
+              id="login-password"
+              className={`login-input${loginFieldErr.password ? " invalid" : ""}`}
+              type="password"
+              value={password}
+              onChange={(e) => {
+                setPassword(e.target.value);
+                if (loginFieldErr.password) setLoginFieldErr({ ...loginFieldErr, password: "" });
+              }}
+              placeholder="请输入管理员密码"
+              autoComplete="current-password"
+              aria-invalid={loginFieldErr.password ? "true" : undefined}
+            />
+            {loginFieldErr.password && <span className="login-field-error" role="alert">{loginFieldErr.password}</span>}
+          </div>
+
+          <button type="submit" className="btn login-submit" aria-busy={loginBusy ? "true" : undefined} disabled={loginBusy}>
+            {loginBusy ? "登录中…" : "登 录"}
+            {!loginBusy && <span className="login-arrow" aria-hidden="true">→</span>}
+          </button>
+        </form>
+      </Modal>
+
+      <Modal
+        open={importOpen}
+        size="lg"
+        title="导入班级表格"
+        showConfirm={false}
+        cancelText="关闭"
+        onCancel={() => { setImportOpen(false); setUploadMsg(""); setImportErr(""); }}
+      >
+        {role === "root" ? (
+          <>
+            <label>目标班级 *</label>
+            <Dropdown
+              value={uploadClassId}
+              onChange={setUploadClassId}
+              options={classes.map((c) => ({ value: c.id, label: c.name }))}
+              placeholder="选择班级"
+            />
+          </>
+        ) : (
+          <p className="hint">将导入到本班：{classes.find((c) => c.id === myClassId)?.name || "（未分配）"}</p>
+        )}
+        {role === "root" && !uploadClassId && (
+          <p className="hint">请先在上方选择目标班级，再拖入或选择成绩 xlsx。</p>
+        )}
+        <DropZone
+          accept=".xlsx"
+          disabled={role === "root" && !uploadClassId}
+          busy={uploading}
+          busyText="导入中…"
+          title="把成绩 xlsx 拖到这里"
+          hint="或点击选择文件 · 导入会替换该班级现有榜单数据"
+          onFiles={(files) => files && files[0] && handleUpload(files[0])}
+        />
+        {uploadMsg && <div className="ai-msg ok">{uploadMsg}</div>}
+        {importErr && <div className="ai-msg err">{importErr}</div>}
+      </Modal>
+
+      <Modal
+        open={scOpen}
+        size="lg"
+        title="第二课堂导入"
+        showConfirm={false}
+        cancelText="关闭"
+        onCancel={() => { setScOpen(false); setScMsg(null); }}
+      >
+        <p className="hint">上传后对学分达到阈值的学生德育加 10 分，重复导入自动先撤后加、不会重复累加。</p>
+        <form className="apply-form" onSubmit={handleImportSecondClass}>
+          {role === "root" ? (
+            <>
+              <label>目标班级 *</label>
+              <Dropdown
+                value={scClassId}
+                onChange={setScClassId}
+                options={classes.map((c) => ({ value: c.id, label: c.name }))}
+                placeholder="选择班级"
+              />
+            </>
+          ) : (
+            <p className="hint">将导入到本班：{classes.find((c) => c.id === myClassId)?.name || "（未分配）"}</p>
+          )}
+          <label>达标阈值（学分 ≥ 阈值即达标）*</label>
+          <TextField
+            type="number"
+            step="0.1"
+            min="0"
+            value={scThreshold}
+            onChange={(e) => setScThreshold(e.target.value)}
+          />
+          <DropZone
+            accept=".xlsx"
+            disabled={scBusy}
+            title="把第二课堂统计 xlsx 拖到这里"
+            hint="或点击选择文件"
+            onFiles={(files) => setScFile(files && files[0] ? files[0] : null)}
+          />
+          <FileChips files={scFile ? [scFile] : []} onRemove={() => setScFile(null)} />
+          <button type="submit" className="btn primary-btn" disabled={scBusy}>
+            {scBusy ? <><span className="spin" /> 导入中…</> : "导入并加分"}
+          </button>
+        </form>
+        {scMsg && <div className={`ai-msg ${scMsg.type}`}>{scMsg.text}</div>}
+      </Modal>
 
       <Modal
         open={!!preview}
@@ -2416,12 +2784,27 @@ export default function App() {
               <li key={i} className="result-item">
                 <span>{it.category}</span>
                 <span>{it.points} 分</span>
-                <span className="assess-basis">{(it.basis || "").slice(0, 40)}</span>
+                <span className="basis-preview">{(it.basis || "").slice(0, 40)}</span>
               </li>
             ))}
           </ul>
         )}
         <p><b>2. 提交后将结束本次流程。</b>如果还想继续筛查其他加分项，请点「取消，继续筛查」，等全部核对完再一起提交。</p>
+      </Modal>
+
+      <Modal
+        open={recallTarget !== null}
+        title="撤回这条发言？"
+        danger
+        confirmText="确认撤回"
+        cancelText="取消"
+        confirmDisabled={recalling}
+        onConfirm={() => handlePassRecall(recallTarget)}
+        onCancel={() => setRecallTarget(null)}
+      >
+        <p><b>1. 这条发言及其之后的所有对话会被删除。</b>AI 之后提出的问题、你的回答都将一并清除，你可以从这条重新回答。</p>
+        <p><b>2. 其后 AI 已给出的加分项也会一并撤销。</b>它们会从下方加分项列表中移除；如需保留，请先记下内容或先点「手动添加加分项」。</p>
+        <p><b>3. 这条发言的文字与附件会放回输入框。</b>可以修改后重新发送。</p>
       </Modal>
     </div>
   );

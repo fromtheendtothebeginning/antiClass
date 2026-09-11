@@ -98,6 +98,18 @@ _SESSIONS = {}
 _LOCK = threading.Lock()
 
 
+class SessionMissing(Exception):
+    """会话不存在或已过期（main.py 映射 404）。"""
+
+
+class SessionBusy(Exception):
+    """有轮次仍在进行中，暂不可回滚（main.py 映射 409）。"""
+
+
+class RewindInvalid(Exception):
+    """撤回参数无效或会话状态不完整（main.py 映射 400）。"""
+
+
 def _gc():
     now = time.time()
     for sid in [k for k, s in _SESSIONS.items() if now - s["updated"] > SESSION_TTL]:
@@ -139,6 +151,8 @@ def start(sid, name, class_id):
             "existing": existing,
             "done": False,
             "ended": False,
+            "turns": [],  # 每轮结束打一个切片标记 {"msgs","items","done"}，供 rewind 按轮回滚
+            "busy": 0,  # 进行中的轮次数（>0 时拒绝回滚）
         }
         _SESSIONS[sess["id"]] = sess
         return dict(sess)
@@ -173,6 +187,78 @@ def finish(session_id):
 def drop(session_id):
     with _LOCK:
         _SESSIONS.pop(session_id, None)
+
+
+def _mark_locked(s):
+    """（内部，调用方须持 _LOCK）追加一轮结束标记：记录本轮结束时的消息数/加分项数/done。
+    done 记的是本轮**结束时**的标志，回滚时据此恢复。
+
+    守卫：仅当本轮确实追加过用户消息（消息数多于上一个标记的 msgs）时才打标记。
+    若流在追加用户消息之前就失败（如会话中途 AI 配置失效、会话已被结束），
+    该轮没有任何可回滚的内容；此时若照常打标记，会让 len(turns) 大于真实学生发言数，
+    前端按 keep_users ↔ 轮次换算撤回时会整体偏移。"""
+    turns = s["turns"]
+    if len(s["messages"]) <= (turns[-1]["msgs"] if turns else 0):
+        return
+    turns.append(
+        {"msgs": len(s["messages"]), "items": len(s["items"]), "done": bool(s["done"])}
+    )
+
+
+def begin_turn(session_id):
+    """一轮开始：busy+1（回滚端点据此拒绝并发的 rewind）。会话已不存在则静默返回。"""
+    with _LOCK:
+        s = _SESSIONS.get(session_id)
+        if s:
+            s["busy"] = int(s.get("busy", 0)) + 1
+
+
+def end_turn(session_id, mark=True):
+    """一轮结束：busy-1 并按需打切片标记（找不到会话静默返回，可能已被 GC/submit 清掉）。
+    调用方用 try/finally 保证流报错/客户端断开时也会执行。
+    mark 必须放在「流式 + 智能分类」全部写完之后，否则会漏记分类那批加分项。"""
+    with _LOCK:
+        s = _SESSIONS.get(session_id)
+        if not s:
+            return
+        s["busy"] = max(0, int(s.get("busy", 0)) - 1)
+        if mark:
+            _mark_locked(s)
+
+
+def rewind(session_id, keep_users):
+    """服务端回滚：保留前 keep_users 条学生发言（不含开场"开始"轮），丢弃其后的消息与加分项。
+    按轮次标记切片（不按 role 配对，容忍流式报错留下的"有用户消息无 AI 回复"悬空态）。
+    异常：SessionMissing→404、SessionBusy→409、RewindInvalid→400（由 main.py 映射）。"""
+    with _LOCK:
+        s = _SESSIONS.get(session_id)
+        if not s:
+            raise SessionMissing()
+        if int(s.get("busy", 0)) > 0:
+            raise SessionBusy()
+        try:
+            keep_users = int(keep_users)
+        except (TypeError, ValueError):
+            raise RewindInvalid()
+        keep_turns = keep_users + 1  # 第 1 轮是开场"开始"轮
+        turns = s.get("turns") or []
+        if keep_users < 0 or keep_turns > len(turns):
+            raise RewindInvalid()
+        mark = turns[keep_turns - 1] if keep_turns > 0 else None
+        s["messages"] = s["messages"][: mark["msgs"]] if mark else []
+        s["items"] = s["items"][: mark["items"]] if mark else []
+        s["done"] = bool(mark["done"]) if mark else False
+        s["turns"] = turns[:keep_turns]
+        s["ended"] = False  # 撤回了就能继续对话（finish 会同时置 done+ended）
+        s["updated"] = time.time()  # 与 touch_updated 等价；持锁中不能调会再加锁的函数
+        return {
+            "ok": True,
+            "kept_turns": keep_turns,
+            "messages_kept": len(s["messages"]),
+            "items": list(s["items"]),  # 快照返回（回滚后的权威全量，前端据此重建列表）
+            "done": s["done"],
+            "ended": False,
+        }
 
 
 def _trim_messages(messages):

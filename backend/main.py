@@ -21,6 +21,7 @@ from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from openpyxl import Workbook, load_workbook
 from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
+from openpyxl.utils.exceptions import InvalidFileException
 from pydantic import BaseModel
 
 from ai import (
@@ -342,6 +343,20 @@ def calc_total(deyu, zhiyu, tiyu, meiyu, laoyu, fujia):
     return round(deyu * 0.15 + zhiyu * 0.60 + tiyu * 0.10 + meiyu * 0.05 + laoyu * 0.10 + fujia, 2)
 
 
+# 解析 xlsx 时的“文件本身有问题”类异常：非 zip/损坏（BadZipFile）、
+# 不支持的格式（InvalidFileException）、缺内部部件（KeyError）、空表/短行（IndexError）
+XLSX_PARSE_ERRORS = (zipfile.BadZipFile, InvalidFileException, KeyError, IndexError)
+
+
+def drop_tmp(path):
+    """删除临时 xlsx。解析中途抛错时 openpyxl 可能仍占用文件句柄，Windows 会拒绝删除
+    （PermissionError），此处忽略删除失败，避免把 400 顺手变成 500。"""
+    try:
+        path.unlink(missing_ok=True)
+    except OSError:
+        pass
+
+
 def parse_xlsx(path):
     wb = load_workbook(path, data_only=True)
     ws = wb[wb.sheetnames[0]]
@@ -421,6 +436,18 @@ def logout(authorization: str = Header(default="")):
     token = authorization[7:] if authorization.startswith("Bearer ") else ""
     TOKENS.pop(token, None)
     return {"ok": True}
+
+
+@app.get("/api/me")
+def me(authorization: str = Header(default="")):
+    """校验当前 token 是否仍有效，供前端刷新页面时验证会话。"""
+    session = require_token(authorization)
+    return {
+        "username": session["username"],
+        "role": session["role"],
+        "class_id": session.get("class_id"),
+        "exp": session["exp"],
+    }
 
 
 # ---------- 加分一遍过（AI 逐项问答，流式输出） ----------
@@ -570,6 +597,7 @@ async def assess_message(session_id: str, request: Request):
             raise
 
     def _gen():
+        assess.begin_turn(session_id)
         try:
             yield from assess.run_turn(session_id, text, image_paths or None)
             # 本轮有图片 → 走智能分类识图定分，识别出的加分项带证据自动汇入（SSE auto_items）
@@ -581,8 +609,9 @@ async def assess_message(session_id: str, request: Request):
                 for it in auto:
                     yield {"type": "auto_items", "items": [it]}
         finally:
-            # 会话目录持久保留（供提交作证据）；不在此删除
-            pass
+            # 轮次标记须在「流式 + 分类」全部写完后打（分类那批加分项也要计入切片），
+            # 放 finally 保证流报错/客户端断开时也归零 busy 并打上标记；会话目录不在此删除
+            assess.end_turn(session_id, mark=True)
 
     return StreamingResponse(
         _sse(_gen()),
@@ -601,6 +630,27 @@ def assess_finish(session_id: str):
     if not session:
         raise HTTPException(status_code=404, detail="会话不存在或已过期")
     return {"ok": True, "done": True, "ended": True, "items": session["items"]}
+
+
+@app.post("/api/assess/{session_id}/rewind")
+async def assess_rewind(session_id: str, request: Request):
+    """服务端回滚：保留前 keep_users 条学生发言（不含开场「开始」轮），丢弃其后的对话与加分项。
+    返回回滚后的权威状态（剩余加分项全量/done/ended），前端据此重建列表。"""
+    ip = request.client.host if request.client else "unknown"
+    rate_limit(f"assess_rewind:{ip}", 30, 600)
+    try:
+        body = await request.json()
+    except Exception:
+        body = None
+    keep_users = body.get("keep_users") if isinstance(body, dict) else None
+    try:
+        return assess.rewind(session_id, keep_users)
+    except assess.SessionMissing:
+        raise HTTPException(status_code=404, detail="会话不存在或已过期，请重新开始")
+    except assess.SessionBusy:
+        raise HTTPException(status_code=409, detail="上一轮仍在进行中，请稍候再撤回")
+    except assess.RewindInvalid:
+        raise HTTPException(status_code=400, detail="无法撤回该轮（会话状态不完整），请重新开始")
 
 
 @app.post("/api/assess/{session_id}/submit")
@@ -840,6 +890,10 @@ def upload(
     except HTTPException:
         tmp.unlink(missing_ok=True)
         raise
+    except XLSX_PARSE_ERRORS:
+        # 损坏/改名的非法 xlsx：给出可读中文提示，避免 500
+        drop_tmp(tmp)
+        raise HTTPException(status_code=400, detail="文件无法解析，请上传成绩导出 xlsx")
     db.replace_students(students, class_id)
     db.set_class_meta(class_id, rows, filename)
     tmp.unlink(missing_ok=True)
@@ -921,8 +975,11 @@ def import_secondclass(
             file_credits[sid] = val
         if not file_credits:
             raise HTTPException(status_code=400, detail="未能从文件中解析出学号与学分数据")
+    except XLSX_PARSE_ERRORS:
+        # 损坏/改名的非法 xlsx：给出可读中文提示，避免 500
+        raise HTTPException(status_code=400, detail="文件无法解析，请上传第二课堂统计 xlsx")
     finally:
-        tmp.unlink(missing_ok=True)
+        drop_tmp(tmp)
 
     pool = {s["sid"]: s for s in db.list_students(class_id)}
     now = datetime.now().isoformat(timespec="seconds")
@@ -999,12 +1056,19 @@ def import_secondclass(
 
 @app.get("/api/leaderboard")
 def leaderboard(class_id: str | None = None):
-    students = db.list_students(class_id or None)
-    meta = {"rows": 0, "source": ""}
-    if class_id:
-        cls = db.get_class(class_id)
-        if cls:
-            meta = {"rows": cls["row_count"], "source": cls["source"]}
+    # 榜单必须指明班级：不带 class_id 会把多个班的学生按总分混排、统一编号名次，故直接拒绝
+    cid = (class_id or "").strip()
+    if not cid:
+        raise HTTPException(status_code=400, detail="缺少 class_id：榜单按班级展示，请指定班级")
+    students = db.list_students(cid)
+    cls = db.get_class(cid)
+    meta = {
+        "rows": cls["row_count"] if cls else 0,
+        "source": cls["source"] if cls else "",
+        # 回传班级标识，便于前端/排查时自证当前展示的是哪个班（class_id 不存在时为空）
+        "class_id": cid,
+        "class_name": cls["name"] if cls else "",
+    }
     # 挂科（无参评资格）学生沉底且不占名次：rank 置 0，综合测评成绩列显示 -1
     ranked = [s for s in students if not s.get("failed")]
     disq = [s for s in students if s.get("failed")]
@@ -1076,13 +1140,17 @@ def adjust_scores(body: AdjustBody, authorization: str = Header(default="")):
 
 @app.get("/api/export")
 def export(class_id: str | None = None):
+    # 榜单按班级导出：不带 class_id 会导出跨班混排的合并榜单（且文件名班级名为空），故直接拒绝
+    cid = (class_id or "").strip()
+    if not cid:
+        raise HTTPException(status_code=400, detail="缺少 class_id：请先选择要导出的班级")
     wb = Workbook()
     ws = wb.active
     ws.title = "Sheet1"
     headers = ["学号", "姓名", "德*15%", "智*60%", "体*10%", "美*5%", "劳*10%", "附加", "总分"]
 
     # 文件名对齐附件「25-26下学期xx班综合测评总分.xlsx」：xx 处放实际班级名
-    cls = db.get_class(class_id) if class_id else None
+    cls = db.get_class(cid)
     cls_name = cls["name"] if cls else ""
     file_name = f"25-26下学期{cls_name}班综合测评总分.xlsx"
 
@@ -1109,7 +1177,7 @@ def export(class_id: str | None = None):
     ws["A1"].number_format = "@"
     ws["B1"].number_format = "@"
 
-    for stu in db.list_students(class_id or None):
+    for stu in db.list_students(cid):
         total = -1 if stu.get("failed") else stu["total"]
         row = [
             str(stu["sid"]),
