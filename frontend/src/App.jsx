@@ -492,7 +492,7 @@ export default function App() {
   const [awardQuery, setAwardQuery] = useState("");
   const [awardCategory, setAwardCategory] = useState("");
   const [awardStatus, setAwardStatus] = useState("");
-  // 审批列表分批渲染：首屏 4 条，点「显示更多」每次 +4（筛选/班级/Tab 变化时重置）
+  // 审批列表分批渲染：首屏 4 条，滚动到接近底部时自动追加 4 条（筛选/班级/Tab 变化时重置）
   const [visibleCount, setVisibleCount] = useState(4);
 
   const [newClassName, setNewClassName] = useState("");
@@ -544,6 +544,9 @@ export default function App() {
   const chatBoxRef = useRef(null);
   const passInputRef = useRef(null); // 一遍过输入框（撤回后聚焦）
   const boardSeq = useRef(0); // 榜单请求序号：快速切班时丢弃先发后到的旧响应
+  const awardSentinelRef = useRef(null); // 审批列表底部的滚动预加载哨兵
+  const awardObserverRef = useRef(null); // 哨兵的 IntersectionObserver（卸载/重建时 disconnect）
+  const prefetchedRef = useRef(new Set()); // 已预取的证据图 URL，避免重复拉取
 
   const [ccSid, setCcSid] = useState("");
   const [ccRole, setCcRole] = useState(CC_ROLES[0].role);
@@ -1559,6 +1562,45 @@ export default function App() {
     ...new Map(awards.map((a) => [a.sid, `${a.sid} ${a.name}`])).values(),
   ];
 
+  // 滚动预加载：列表底部哨兵进入「视口下方 400px」范围即自动追加一批，替代手动「显示更多」
+  // 依赖 visibleCount 重建观察器：新建的观察器会立刻上报一次当前相交状态，因此一批加完后
+  // 哨兵若仍在提前量内会继续加载下一批（首屏 4 条折叠卡不满一屏时不会卡住），
+  // 直到哨兵被推出提前量之外或数据取完（哨兵此时已不渲染）
+  useEffect(() => {
+    const el = awardSentinelRef.current;
+    if (!el || !("IntersectionObserver" in window)) return;
+    const ob = new IntersectionObserver(
+      (entries) => {
+        if (entries.some((e) => e.isIntersecting)) {
+          setVisibleCount((c) => Math.min(c + 4, filteredAwards.length));
+        }
+      },
+      { rootMargin: "0px 0px 400px 0px" }
+    );
+    ob.observe(el);
+    awardObserverRef.current = ob;
+    return () => ob.disconnect();
+  }, [visibleCount, filteredAwards.length, tab]);
+
+  // 证据图片预加载：在下一批（slice(visibleCount, visibleCount+4)）插入 DOM 之前，
+  // 就把它用到的图片类证据拉进浏览器缓存，滚动下去即刻有图、不用等现拉。
+  // 只预取下一批（不把整份列表的图都拉下来），同一 URL 只预取一次，失败静默忽略。
+  // 仅在「加分审批」Tab 生效，避免用户没打开审批页就白白拉图
+  useEffect(() => {
+    if (tab !== "approve") return;
+    filteredAwards.slice(visibleCount, visibleCount + 4).forEach((a) => {
+      (a.evidence || []).forEach((f) => {
+        if (!isImage(f)) return; // 非图片证据（pdf/zip 等）不预取
+        const url = evidenceUrl(a.id, f);
+        if (prefetchedRef.current.has(url)) return;
+        prefetchedRef.current.add(url);
+        const img = new Image();
+        img.onerror = () => {}; // 预取失败（404 等）静默吞掉，不打扰界面
+        img.src = url;
+      });
+    });
+  }, [visibleCount, awards, awardQuery, awardCategory, awardStatus, tab]);
+
   return (
     <div className={`page${mounted ? " mounted" : ""}`}>
       <div className="bg-grid" />
@@ -2331,13 +2373,17 @@ export default function App() {
                     <AwardCard award={a} token={token} onRefresh={() => { loadAwards(); loadBoard(classSel); }} onPreview={(aid, f) => setPreview({ aid, file: f })} />
                   </Reveal>
                 ))}
-                {filteredAwards.length > visibleCount && (
-                  <div className="award-more">
-                    <button className="btn ghost" onClick={() => setVisibleCount((c) => c + 4)}>
-                      显示更多（剩余 {filteredAwards.length - visibleCount} 条）
-                    </button>
-                  </div>
-                )}
+                {/* 哨兵进入视口提前量即自动加载下一批；不支持 IntersectionObserver 时才回退为手动按钮 */}
+                {filteredAwards.length > visibleCount &&
+                  ("IntersectionObserver" in window ? (
+                    <div ref={awardSentinelRef} className="award-sentinel" aria-hidden="true" />
+                  ) : (
+                    <div className="award-more">
+                      <button className="btn ghost" onClick={() => setVisibleCount((c) => c + 4)}>
+                        显示更多（剩余 {filteredAwards.length - visibleCount} 条）
+                      </button>
+                    </div>
+                  ))}
               </>
             )}
           </div>

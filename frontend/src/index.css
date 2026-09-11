@@ -2138,6 +2138,11 @@ button {
   margin: 4px 0 18px;
 }
 
+/* 分批渲染：滚动预加载哨兵（无视觉，仅供 IntersectionObserver 判定是否接近列表底部） */
+.award-sentinel {
+  height: 1px;
+}
+
 @media (prefers-reduced-motion: reduce) {
   .award-collapse,
   .award-chevron {
