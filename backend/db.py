@@ -40,7 +40,7 @@ DB_NAME = os.environ.get("MYSQL_DB", "scholarship")
 
 STUDENT_FIELDS = ("sid", "name", "class_id", "course_count", "credits", "gpa", "deyu", "score", "tiyu", "meiyu", "laoyu", "fujia", "failed", "total")
 AWARD_FIELDS = ("id", "sid", "name", "class_id", "category", "points", "basis", "evidence", "folder", "approved", "reject_reason", "created_at")
-ADMIN_FIELDS = ("username", "role", "class_id", "created_at")
+ADMIN_FIELDS = ("username", "role", "class_id", "created_at", "nickname")
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS students (
@@ -109,6 +109,8 @@ CREATE TABLE IF NOT EXISTS admins (
     password_hash CHAR(64) NOT NULL,
     role VARCHAR(8) NOT NULL DEFAULT 'admin',
     class_id CHAR(32) NULL,
+    nickname VARCHAR(32) NOT NULL DEFAULT '',
+    avatar MEDIUMTEXT,
     created_at DATETIME NOT NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 """
@@ -149,6 +151,8 @@ def init_db():
             ("students", "failed", "failed TINYINT(1) NOT NULL DEFAULT 0"),
             ("awards", "class_id", "class_id CHAR(32) NOT NULL DEFAULT ''"),
             ("awards", "reject_reason", "reject_reason VARCHAR(500) NOT NULL DEFAULT ''"),
+            ("admins", "nickname", "nickname VARCHAR(32) NOT NULL DEFAULT ''"),
+            ("admins", "avatar", "avatar MEDIUMTEXT"),
         ):
             cur.execute(
                 "SELECT COUNT(*) AS n FROM information_schema.COLUMNS "
@@ -522,6 +526,23 @@ def update_admin(username, password=None, class_id=None):
 def delete_admin(username):
     with tx() as cur:
         cur.execute("DELETE FROM admins WHERE username=%s", (username,))
+
+
+def get_avatar(username):
+    """头像单独取（data URL，可能几十 KB，不随账号列表/登录响应一起传）。"""
+    with tx() as cur:
+        cur.execute("SELECT avatar FROM admins WHERE username=%s", (username,))
+        row = cur.fetchone()
+    return (row["avatar"] or "") if row else ""
+
+
+def update_profile(username, nickname=None, avatar=None):
+    """昵称/头像自改；传 None 表示该项保持不变（头像传 '' 表示清除）。"""
+    with tx() as cur:
+        if nickname is not None:
+            cur.execute("UPDATE admins SET nickname=%s WHERE username=%s", (nickname, username))
+        if avatar is not None:
+            cur.execute("UPDATE admins SET avatar=%s WHERE username=%s", (avatar or None, username))
 
 
 def verify_admin(username, password):

@@ -54,6 +54,30 @@ export function fetchMe(token) {
   return request("/me", { headers: { Authorization: `Bearer ${token}` } });
 }
 
+// 改当前账号的昵称/头像：avatar 省略/传 null = 不变，"" = 清除，data URL = 替换
+export function updateProfile(payload, token) {
+  return request("/profile", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+    body: JSON.stringify(payload)
+  });
+}
+
+// 全站背景图案：GET 公开（访客也要按保存的图案渲染），POST 需登录
+// 形态：{desktop: {pattern, url}, mobile: {pattern, url}}；pattern=custom 时 url 是图片地址
+export function getAppearance() {
+  return request("/appearance");
+}
+
+// payload: {desktop: {pattern, image}, mobile: {pattern, image}}，image 是自定义图的 data URL（不换图留空）
+export function saveAppearance(payload, token) {
+  return request("/appearance", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+    body: JSON.stringify(payload)
+  });
+}
+
 export function fetchLeaderboard(classId) {
   return request(`/leaderboard${classId ? `?class_id=${encodeURIComponent(classId)}` : ""}`);
 }

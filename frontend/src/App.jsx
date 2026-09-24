@@ -21,6 +21,7 @@ import {
   fetchLeaderboard,
   fetchMe,
   getAiSettings,
+  getAppearance,
   importSecondClass,
   listAiModels,
   listAwards,
@@ -32,16 +33,19 @@ import {
   rewindAssess,
   saveAiPrompts,
   saveAiSettings,
+  saveAppearance,
   sendAssess,
   setOnAuthExpired,
   startAssess,
   submitAwards,
   submitAssess,
   testAi,
+  updateProfile,
   uploadXlsx,
   withdrawAward,
   finishAssess
 } from "./api.js";
+import Avatar from "./components/Avatar.jsx";
 import Modal from "./components/Modal.jsx";
 import Reveal from "./components/Reveal.jsx";
 import Dropdown from "./components/Dropdown.jsx";
@@ -56,6 +60,46 @@ const ROLE_KEY = "role";
 const MY_CLASS_KEY = "my_class_id";
 const CLASS_KEY = "sel_class_id"; // 访客看榜时选定的班级（榜单按班展示，需记住选择）
 const CATEGORIES = ["德育", "体育", "美育", "劳育", "附加分"];
+// 「用户界面」外壳：所有人都从侧边栏进入，奖学金评定是其中一个子界面（"statistics" 组）。
+// tab 为空串 = 刚进入、尚未选择界面（此时只有侧边栏）；奖学金评定的二级 Tab 与访客可见的公开 Tab
+// 分开：数据管理（导入/第二课堂/证据导出/班级管理）与配置区（模型/账号）仅登录后可见。
+const SCH_TABS = ["board", "apply", "pass", "approve", "manage"];
+const PUBLIC_TABS = ["board", "apply", "pass", "approve"];
+const TAB_LABELS = { board: "榜单", apply: "加分申报", pass: "加分一遍过", approve: "加分审批", manage: "数据管理" };
+const AVATAR_PX = 192; // 头像上传前压到的边长（后端按 data URL 长度也有限制）
+const PATTERN_PX = 1600; // 自定义图案压到的最大边长（按屏幕宽度铺满整屏，源图太小会糊）
+const PATTERN_MAX_CHARS = 800000; // 压完超过这个长度就退回 JPEG（后端上限 1200000 字符）
+// 背景图案：id 与后端 PATTERN_NAME 对应；image/size 是直接喂给 CSS 的值（内置图案的画法定义在这里，
+// 不再是 index.css 的 .pat-* 类——因为电脑端/手机端各要一套，靠 .page 上的 CSS 变量 + 媒体查询切换）
+const BG_PATTERNS = [
+  {
+    id: "grid",
+    label: "网格",
+    image: "linear-gradient(var(--accent-1-soft) 1px, transparent 1px), linear-gradient(90deg, var(--accent-1-soft) 1px, transparent 1px)",
+    size: "60px 60px",
+    swatchSize: "14px 14px"
+  },
+  {
+    id: "dots",
+    label: "点阵",
+    image: "radial-gradient(var(--accent-1-soft-strong) 1.4px, transparent 1.4px)",
+    size: "26px 26px",
+    swatchSize: "9px 9px"
+  },
+  {
+    id: "stripes",
+    label: "斜纹",
+    image: "repeating-linear-gradient(45deg, var(--accent-1-soft) 0 2px, transparent 2px 20px)",
+    size: "auto",
+    swatchSize: "auto"
+  },
+  { id: "none", label: "无图案", image: "none", size: "auto", swatchSize: "auto" }
+];
+// fit = 自定义图的适配方式：电脑端按屏幕宽度（高度可在屏幕外），手机端按屏幕高度（宽度可在屏幕外）
+const BG_SLOTS = [
+  { id: "desktop", label: "电脑端（宽屏）", fit: "100% auto", fitText: "按宽度铺满" },
+  { id: "mobile", label: "手机端（≤768px）", fit: "auto 100%", fitText: "按高度铺满" }
+];
 const CC_ROLES = [
   { role: "班长、团支书、辅导员助理", points: 8 },
   { role: "副班长、学习委员", points: 4 },
@@ -463,11 +507,81 @@ function DraftCard({ draft, submitting, onChangeItem, onRemoveItem, onSubmit, on
   );
 }
 
+/** 选择本地图片 → 居中裁剪成正方形 → 压到 192px JPEG data URL（头像存储与展示都用它） */
+function readAvatar(file) {
+  return new Promise((resolve, reject) => {
+    const url = URL.createObjectURL(file);
+    const img = new Image();
+    img.onload = () => {
+      const side = Math.min(img.width, img.height);
+      const canvas = document.createElement("canvas");
+      canvas.width = AVATAR_PX;
+      canvas.height = AVATAR_PX;
+      canvas
+        .getContext("2d")
+        .drawImage(img, (img.width - side) / 2, (img.height - side) / 2, side, side, 0, 0, AVATAR_PX, AVATAR_PX);
+      URL.revokeObjectURL(url);
+      resolve(canvas.toDataURL("image/jpeg", 0.85));
+    };
+    img.onerror = () => {
+      URL.revokeObjectURL(url);
+      reject(new Error("图片读取失败，请换一张图片"));
+    };
+    img.src = url;
+  });
+}
+
+/** 选择图案图片 → 等比压到 ≤1600px（按屏幕宽度铺满，源图太小会糊）；PNG/WebP/GIF 保留原样编码以保住透明通道，
+    压完仍过大（照片类）则退回 JPEG；JPEG 源直接按 JPEG 压 */
+function readPatternImage(file) {
+  return new Promise((resolve, reject) => {
+    const lossless = /png|webp|gif/i.test(file.type || "");
+    const url = URL.createObjectURL(file);
+    const img = new Image();
+    img.onload = () => {
+      const scale = Math.min(1, PATTERN_PX / Math.max(img.width, img.height));
+      const w = Math.max(1, Math.round(img.width * scale));
+      const h = Math.max(1, Math.round(img.height * scale));
+      const canvas = document.createElement("canvas");
+      canvas.width = w;
+      canvas.height = h;
+      canvas.getContext("2d").drawImage(img, 0, 0, w, h);
+      URL.revokeObjectURL(url);
+      if (!lossless) return resolve(canvas.toDataURL("image/jpeg", 0.85));
+      const png = canvas.toDataURL("image/png");
+      resolve(png.length > PATTERN_MAX_CHARS ? canvas.toDataURL("image/jpeg", 0.85) : png);
+    };
+    img.onerror = () => {
+      URL.revokeObjectURL(url);
+      reject(new Error("图片读取失败，请换一张图片"));
+    };
+    img.src = url;
+  });
+}
+
 export default function App() {
   const [token, setToken] = useState(localStorage.getItem(TOKEN_KEY) || "");
   const [role, setRole] = useState(localStorage.getItem(ROLE_KEY) || "");
   const [myClassId, setMyClassId] = useState(localStorage.getItem(MY_CLASS_KEY) || "");
-  const [tab, setTab] = useState("board");
+  const [account, setAccount] = useState(""); // 当前登录账号（用户名，来自 login / GET /api/me）
+  const [profile, setProfile] = useState({ nickname: "", avatar: "" }); // 昵称 + 头像（data URL）
+  const [nickInput, setNickInput] = useState("");
+  const [avatarPreview, setAvatarPreview] = useState(""); // 个人资料页待保存的头像
+  const [profileMsg, setProfileMsg] = useState(null);
+  const [profileBusy, setProfileBusy] = useState(false);
+  // 背景图案：桌面端/手机端各一套（bgPick = 本地选择，点一下即预览；bgSaved = 服务端已保存的）
+  const [bgSaved, setBgSaved] = useState({
+    desktop: { pattern: "grid", url: "" },
+    mobile: { pattern: "grid", url: "" }
+  });
+  const [bgPick, setBgPick] = useState({
+    desktop: { pattern: "grid", image: "" },
+    mobile: { pattern: "grid", image: "" }
+  });
+  const [bgMsg, setBgMsg] = useState(null);
+  const [bgBusy, setBgBusy] = useState(false);
+  const [tab, setTab] = useState(""); // 空串 = 刚进入，只显示侧边栏，等用户点具体界面
+  const schTabRef = useRef("board"); // 记住「奖学金评定」界面内最后停留的子页面
   const [loginOpen, setLoginOpen] = useState(false);
   const [loginNotice, setLoginNotice] = useState("");
   const [mounted, setMounted] = useState(false);
@@ -684,6 +798,10 @@ export default function App() {
         localStorage.setItem(MY_CLASS_KEY, r.class_id || "");
         setRole(r.role);
         setMyClassId(r.class_id || "");
+        setAccount(r.username || "");
+        setProfile({ nickname: r.nickname || "", avatar: r.avatar || "" });
+        setNickInput(r.nickname || "");
+        setAvatarPreview(r.avatar || "");
       })
       .catch(() => {});
   }, []);
@@ -692,14 +810,27 @@ export default function App() {
     loadClasses().then(() => setMounted(true));
   }, [token, role, myClassId]);
 
+  // 背景图案是全站设置，公开接口：访客也要按管理员保存的图案渲染（电脑端/手机端各一套）
+  useEffect(() => {
+    getAppearance()
+      .then((d) => {
+        setBgSaved({ desktop: d.desktop, mobile: d.mobile });
+        setBgPick({
+          desktop: { pattern: d.desktop.pattern, image: "" },
+          mobile: { pattern: d.mobile.pattern, image: "" }
+        });
+      })
+      .catch(() => {});
+  }, []);
+
   useEffect(() => {
     loadBoard(classSel);
     loadAwards();
   }, [token, classSel, role, myClassId]);
 
-  // root 每次进入「管理」Tab 都刷新管理员账号列表，保证始终看到全部账号
+  // root 每次进入「配置 → 账号管理」都刷新账号列表，保证始终看到全部账号
   useEffect(() => {
-    if (tab === "manage" && role === "root") loadAdmins();
+    if (tab === "cfg_accounts" && role === "root") loadAdmins();
   }, [tab, token, role]);
 
   // 筛选条件（关键词/栏目/状态）、班级或 Tab 变化时重置分批数量，避免切换后一次显示很长一截
@@ -715,7 +846,7 @@ export default function App() {
   }, [passMsgs, passBusy]);
 
   useEffect(() => {
-    if (tab === "ai" && token && !aiMeta) {
+    if (tab === "cfg_model" && token && !aiMeta) {
       loadAiSettings();
     }
   }, [tab, token, aiMeta]);
@@ -874,6 +1005,10 @@ export default function App() {
       setToken(data.token);
       setRole(data.role || "");
       setMyClassId(data.class_id || "");
+      setAccount(data.username || "");
+      setProfile({ nickname: data.nickname || "", avatar: "" });
+      setNickInput(data.nickname || "");
+      setAvatarPreview("");
       setPassword("");
       setLoginOpen(false);
     } catch (err) {
@@ -906,7 +1041,9 @@ export default function App() {
     setToken("");
     setRole("");
     setMyClassId("");
-    setTab((t) => (t === "manage" || t === "ai" ? "board" : t));
+    setAccount("");
+    setProfile({ nickname: "", avatar: "" });
+    setTab((t) => (PUBLIC_TABS.includes(t) ? t : "")); // 登录态专属界面（数据管理/配置）随之退出
     setLoginNotice(msg || "登录已过期，请重新登录");
     setLoginOpen(true);
   }
@@ -919,7 +1056,111 @@ export default function App() {
     setToken("");
     setRole("");
     setMyClassId("");
+    setAccount("");
+    setProfile({ nickname: "", avatar: "" });
+    setTab((t) => (PUBLIC_TABS.includes(t) ? t : ""));
     setLoginNotice("");
+  }
+
+  // ---------- 个人资料（昵称/头像） ----------
+  async function handlePickAvatar(fileList) {
+    const file = fileList && fileList[0];
+    if (!file) return;
+    setProfileMsg(null);
+    try {
+      setAvatarPreview(await readAvatar(file));
+    } catch (err) {
+      setProfileMsg({ type: "err", text: err.message });
+    }
+  }
+
+  async function handleSaveProfile(e) {
+    e.preventDefault();
+    setProfileBusy(true);
+    setProfileMsg(null);
+    try {
+      const d = await updateProfile(
+        {
+          nickname: nickInput.trim(),
+          // 只有本地预览与已保存头像不同才提交头像字段（null = 保持不变）
+          avatar: avatarPreview === profile.avatar ? null : avatarPreview,
+        },
+        token
+      );
+      setProfile({ nickname: d.nickname, avatar: d.avatar });
+      setNickInput(d.nickname);
+      setAvatarPreview(d.avatar);
+      setProfileMsg({ type: "ok", text: "个人资料已保存" });
+    } catch (err) {
+      setProfileMsg({ type: "err", text: err.message });
+    } finally {
+      setProfileBusy(false);
+    }
+  }
+
+  // ---------- 背景图案（电脑端/手机端各一套，保存后所有访客生效） ----------
+  // 某端当前生效的 CSS：本地选了自定义图就用它，否则用已保存的图 / 内置图案
+  // 内置图案：按 tile 尺寸平铺；自定义图：一张图铺满整屏、不平铺，超出屏幕的部分居中裁切
+  // （电脑端按宽度适配 100% auto、手机端按高度适配 auto 100%，见 BG_SLOTS.fit）
+  function patternCss(slot) {
+    const pick = bgPick[slot];
+    if (pick.pattern === "custom") {
+      const url = pick.image || bgSaved[slot].url;
+      if (url) {
+        return {
+          image: `url("${url}")`,
+          size: BG_SLOTS.find((s) => s.id === slot).fit,
+          repeat: "no-repeat",
+          pos: "center center",
+          custom: true
+        };
+      }
+    }
+    const def = BG_PATTERNS.find((p) => p.id === pick.pattern) || BG_PATTERNS[0];
+    return { image: def.image, size: def.size, repeat: "repeat", pos: "0 0", custom: false };
+  }
+
+  // 某端是否有未保存改动（本地选择 vs 服务端已保存；换了新的自定义图也算）
+  function patternDirty(slot) {
+    const pick = bgPick[slot];
+    if (pick.pattern !== bgSaved[slot].pattern) return true;
+    return pick.pattern === "custom" && !!pick.image;
+  }
+
+  function patternLabel(saved) {
+    if (saved.pattern === "custom") return saved.url ? "自定义图案" : "网格（自定义图缺失）";
+    return BG_PATTERNS.find((p) => p.id === saved.pattern)?.label || saved.pattern;
+  }
+
+  async function handlePickPattern(slot, fileList) {
+    const file = fileList && fileList[0];
+    if (!file) return;
+    setBgMsg(null);
+    try {
+      const image = await readPatternImage(file);
+      // 导入即选中「自定义」，省掉再点一次卡片
+      setBgPick((p) => ({ ...p, [slot]: { pattern: "custom", image } }));
+    } catch (err) {
+      setBgMsg({ type: "err", text: err.message });
+    }
+  }
+
+  async function handleSaveBg() {
+    setBgBusy(true);
+    setBgMsg(null);
+    try {
+      const d = await saveAppearance(bgPick, token);
+      setBgSaved({ desktop: d.desktop, mobile: d.mobile });
+      setBgPick({
+        desktop: { pattern: d.desktop.pattern, image: "" },
+        mobile: { pattern: d.mobile.pattern, image: "" }
+      });
+      setBgMsg({ type: "ok", text: "背景图案已保存，全站立即生效" });
+    } catch (err) {
+      setBgMsg({ type: "err", text: err.message });
+    } finally {
+      setBgBusy(false);
+    }
   }
 
   async function handleUpload(file) {
@@ -1533,10 +1774,14 @@ export default function App() {
   }
 
   function switchTab(next) {
+    // 记住「奖学金评定」界面里最后停留的子页面，从工作台其它界面点回来时不会丢上下文
+    if (SCH_TABS.includes(next)) schTabRef.current = next;
     setTab(next);
     setError("");
     if (next === "approve") loadAwards();
   }
+
+  const navItemCls = (on) => (on ? "nav-item active" : "nav-item");
 
   const pendingCount = awards.filter((a) => a.approved === "否").length;
   const awardQueryTrim = awardQuery.trim();
@@ -1602,54 +1847,113 @@ export default function App() {
   }, [visibleCount, awards, awardQuery, awardCategory, awardStatus, tab]);
 
   return (
-    <div className={`page${mounted ? " mounted" : ""}`}>
+    // 背景图案通过 CSS 变量下发（电脑端/手机端各一套，媒体查询切换，见 index.css「背景图案」）
+    <div
+      className={`page${mounted ? " mounted" : ""}`}
+      style={{
+        "--bg-desktop": patternCss("desktop").image,
+        "--bg-size-desktop": patternCss("desktop").size,
+        "--bg-repeat-desktop": patternCss("desktop").repeat,
+        "--bg-pos-desktop": patternCss("desktop").pos,
+        "--bg-mobile": patternCss("mobile").image,
+        "--bg-size-mobile": patternCss("mobile").size,
+        "--bg-repeat-mobile": patternCss("mobile").repeat,
+        "--bg-pos-mobile": patternCss("mobile").pos
+      }}
+    >
       <div className="bg-grid" />
       <div className="bg-glow glow-1" />
       <div className="bg-glow glow-2" />
       <header className="topbar">
         <div className="brand">
-          <h1>综合奖学金评定</h1>
-          <span className="meta">
-            {meta.source ? `数据来源：${meta.source}` : "暂无数据"} · 共 {meta.rows ?? 0} 条课程记录 · {students.length} 名学生
-          </span>
+          <h1>anticlass</h1>
+          {/* 未选班级时副标题整行不显示（榜单按班展示，没选班也没有数据来源可写） */}
+          {classSel && (
+            <span className="meta">
+              {meta.source ? `数据来源：${meta.source}` : "暂无数据"} · 共 {meta.rows ?? 0} 条课程记录 · {students.length} 名学生
+            </span>
+          )}
         </div>
         <div className="actions">
           <ThemeToggle />
-          <button className="btn" onClick={handleExport}>导出 Excel</button>
           {token ? (
             <button className="btn ghost" onClick={handleLogout}>退出登录</button>
           ) : (
             <button className="btn" onClick={() => { setLoginNotice(""); setError(""); setLoginOpen(true); }}>
-              管理员登录
+              登录
             </button>
           )}
         </div>
       </header>
 
-      <nav className="tabs">
-        <button className={tab === "board" ? "tab active" : "tab"} onClick={() => switchTab("board")}>榜单</button>
-        <button className={tab === "apply" ? "tab active" : "tab"} onClick={() => switchTab("apply")}>加分申报</button>
-        <button className={tab === "pass" ? "tab active" : "tab"} onClick={() => switchTab("pass")}>加分一遍过</button>
-        <button className={tab === "approve" ? "tab active" : "tab"} onClick={() => switchTab("approve")}>
-          加分审批{pendingCount > 0 ? `（${pendingCount}）` : ""}
-        </button>
-        {token && (
-          <button className={tab === "manage" ? "tab active" : "tab"} onClick={() => switchTab("manage")}>管理</button>
-        )}
-        {token && role === "root" && (
-          <button className={tab === "ai" ? "tab active" : "tab"} onClick={() => switchTab("ai")}>AI 设置</button>
-        )}
-      </nav>
+      {/* 侧边栏所有访客都显示（不登录也能看榜单/申报/审批）；tab 为空 = 刚进入，只有侧边栏、不显示任何界面。
+          以后新增功能界面 = 这里加一条 nav-item + main 里加一个 {tab === "xxx" && …} 分支。 */}
+      <div className="shell">
+        <aside className="shell-nav">
+          {token && (
+            <div className="shell-user">
+              <Avatar avatar={profile.avatar} nickname={profile.nickname} username={account} size={42} />
+              <div className="shell-user-text">
+                <strong>{profile.nickname || account}</strong>
+                <span>@{account} · {role === "root" ? "超级管理员" : "管理员"}</span>
+              </div>
+            </div>
+          )}
+          <div className="nav-group">
+            <span className="nav-group-title">统计界面</span>
+            <button
+              className={navItemCls(SCH_TABS.includes(tab))}
+              onClick={() => switchTab(schTabRef.current)}
+            >
+              奖学金评定
+            </button>
+          </div>
+          {token && (
+            <div className="nav-group">
+              <span className="nav-group-title">配置</span>
+              {role === "root" && (
+                <button className={navItemCls(tab === "cfg_model")} onClick={() => switchTab("cfg_model")}>模型配置</button>
+              )}
+              {role === "root" && (
+                <button className={navItemCls(tab === "cfg_accounts")} onClick={() => switchTab("cfg_accounts")}>账号管理</button>
+              )}
+              <button className={navItemCls(tab === "cfg_appearance")} onClick={() => switchTab("cfg_appearance")}>背景图案</button>
+              <button className={navItemCls(tab === "cfg_profile")} onClick={() => switchTab("cfg_profile")}>个人资料</button>
+            </div>
+          )}
+        </aside>
 
-      <datalist id="student-list">
-        {students.map((s) => (
-          <option key={`${s.class_id || ""}:${s.sid}`} value={s.sid}>{s.name}</option>
-        ))}
-      </datalist>
+        <div className="shell-body">
+          {/* 二级 Tab 只在进入「奖学金评定」后出现；未登录少一个「数据管理」。
+              右侧「导出 Excel」是该界面自己的操作（导出当前班级的综合测评总分），未选班级时禁用 */}
+          {(token ? SCH_TABS : PUBLIC_TABS).includes(tab) && (
+            <nav className="tabs">
+              {(token ? SCH_TABS : PUBLIC_TABS).map((t) => (
+                <button key={t} className={tab === t ? "tab active" : "tab"} onClick={() => switchTab(t)}>
+                  {TAB_LABELS[t]}{t === "approve" && pendingCount > 0 ? `（${pendingCount}）` : ""}
+                </button>
+              ))}
+              <span className="tabs-fill" />
+              <button
+                className="btn small tabs-action"
+                onClick={handleExport}
+                disabled={!classSel}
+                title={classSel ? "导出当前班级的综合测评总分 xlsx" : "请先选择班级"}
+              >
+                导出 Excel
+              </button>
+            </nav>
+          )}
 
-      {error && !loginOpen && <div className="error bar">{error}</div>}
+          <datalist id="student-list">
+            {students.map((s) => (
+              <option key={`${s.class_id || ""}:${s.sid}`} value={s.sid}>{s.name}</option>
+            ))}
+          </datalist>
 
-      <main>
+          {error && !loginOpen && <div className="error bar">{error}</div>}
+
+          <main>
         {tab === "pass" && (
           <div className="panel">
             <h2>加分一遍过</h2>
@@ -1976,15 +2280,16 @@ export default function App() {
                         style={{ "--i": Math.max(s.rank - 1, 0) }}
                         className={`${s.rank > 0 && s.rank <= 3 ? `top top-${s.rank}` : ""}${s.rank === 0 ? " disq" : ""}`}
                       >
-                        <td className="rank">{s.rank > 0 ? s.rank : "无资格"}</td>
-                        <td>{s.sid}</td>
+                        {/* data-label：手机端表格变卡片后，各分数项的标签由 CSS ::before 取用 */}
+                        <td className="rank"><span>{s.rank > 0 ? s.rank : "无资格"}</span></td>
+                        <td data-label="学号">{s.sid}</td>
                         <td className="name">{s.name}</td>
-                        <td>{s.deyu.toFixed(1)}</td>
-                        <td className="score">{s.score.toFixed(1)}</td>
-                        <td>{s.tiyu.toFixed(1)}</td>
-                        <td>{s.meiyu.toFixed(1)}</td>
-                        <td>{s.laoyu.toFixed(1)}</td>
-                        <td>{s.fujia.toFixed(1)}</td>
+                        <td data-label="德育">{s.deyu.toFixed(1)}</td>
+                        <td data-label="智育" className="score">{s.score.toFixed(1)}</td>
+                        <td data-label="体育">{s.tiyu.toFixed(1)}</td>
+                        <td data-label="美育">{s.meiyu.toFixed(1)}</td>
+                        <td data-label="劳育">{s.laoyu.toFixed(1)}</td>
+                        <td data-label="附加分">{s.fujia.toFixed(1)}</td>
                         <td className="total">{s.total.toFixed(2)}</td>
                       </tr>
                     ))}
@@ -2002,7 +2307,7 @@ export default function App() {
               榜单公开查看；德育/美育/劳育默认 70（基础分），附加分默认 0，体育取体育课成绩。
               {token
                 ? "分数调整请使用「加分申报 → 分数调整」表单，支持正则批量选人并留痕。"
-                : "管理员登录后可在「管理」页导入 xlsx，在「加分申报」页批量加分和调整分数。"}
+                : "管理员登录后可在「数据管理」页导入 xlsx，在「加分申报」页批量加分和调整分数。"}
             </p>
           </>
         )}
@@ -2326,7 +2631,7 @@ export default function App() {
             )}
             <p className="hint">
               申报公示公开，任何人可查看依据与证据；仅管理员登录后可审批（通过/驳回/撤回/删除）。
-              {!token && " 点击右上角「管理员登录」进行审批。"}
+              {!token && " 点击右上角「登录」进行审批。"}
             </p>
             <div className="filter-bar">
               <input
@@ -2390,7 +2695,8 @@ export default function App() {
         )}
         {tab === "manage" && token && (
           <div className="panel">
-            <h2>管理</h2>
+            <h2>数据管理</h2>
+            <p className="hint">奖学金评定的数据入口：导入成绩、第二课堂加分、证据归档与班级数据维护。</p>
             {manageMsg && <div className={`ai-msg ${manageMsg.type}`}>{manageMsg.text}</div>}
             <div className="ai-section">
               <h3>导入班级表格</h3>
@@ -2431,81 +2737,208 @@ export default function App() {
               ) : (
                 <p className="hint">你负责的班级：{classes.find((c) => c.id === myClassId)?.name || "（未分配）"}</p>
               )}
-              <button type="button" className="btn primary-btn" onClick={handleExportZip} disabled={zipping || !token}>
-                {zipping ? <><span className="spin" /> 打包中…</> : "导出证据 zip"}
-              </button>
+              {/* 按钮单独一行（.ai-actions 是横排容器）：否则会跟在上面「导出班级」下拉同一行，与其他分区的按钮不齐 */}
+              <div className="ai-actions">
+                <button type="button" className="btn primary-btn" onClick={handleExportZip} disabled={zipping || !token}>
+                  {zipping ? <><span className="spin" /> 打包中…</> : "导出证据 zip"}
+                </button>
+              </div>
             </div>
             {role === "root" && (
-              <>
-                <div className="ai-section">
-                  <h3>班级管理</h3>
-                  <div className="manage-list">
-                    {classes.map((c) => (
-                      <div key={c.id} className="result-item">
-                        <strong>{c.name}</strong>
-                        <span>{c.students} 名学生</span>
-                        <span>{c.row_count ?? 0} 条课程记录 · {c.source || "未导入"}</span>
-                        <button
-                          className="btn small danger"
-                          disabled={c.students === 0}
-                          onClick={() => setClearClassTarget({ id: c.id, name: c.name })}
-                        >清除数据</button>
-                        <button
-                          className="btn small danger"
-                          disabled={c.students > 0}
-                          onClick={() => setDeleteClassTarget({ id: c.id, name: c.name })}
-                          title={c.students > 0 ? "班级仍有学生，无法删除" : undefined}
-                        >删除</button>
-                      </div>
-                    ))}
-                    {classes.length === 0 && <p className="hint">暂无班级。</p>}
-                  </div>
-                  <form className="apply-form" onSubmit={handleCreateClass}>
-                    <label>新增班级名称 *</label>
-                    <TextField value={newClassName} onChange={(e) => setNewClassName(e.target.value)} placeholder="如 251185Y3" />
-                    <button type="submit" className="btn primary-btn">创建班级</button>
-                  </form>
+              <div className="ai-section">
+                <h3>班级管理</h3>
+                <div className="manage-list">
+                  {classes.map((c) => (
+                    <div key={c.id} className="result-item">
+                      <strong>{c.name}</strong>
+                      <span>{c.students} 名学生</span>
+                      <span>{c.row_count ?? 0} 条课程记录 · {c.source || "未导入"}</span>
+                      <button
+                        className="btn small danger"
+                        disabled={c.students === 0}
+                        onClick={() => setClearClassTarget({ id: c.id, name: c.name })}
+                      >清除数据</button>
+                      <button
+                        className="btn small danger"
+                        disabled={c.students > 0}
+                        onClick={() => setDeleteClassTarget({ id: c.id, name: c.name })}
+                        title={c.students > 0 ? "班级仍有学生，无法删除" : undefined}
+                      >删除</button>
+                    </div>
+                  ))}
+                  {classes.length === 0 && <p className="hint">暂无班级。</p>}
                 </div>
-                <div className="ai-section">
-                  <h3>管理员账号</h3>
-                  <p className="hint">每个管理员只能管理其负责班级的榜单、申报审批与分数调整。</p>
-                  <div className="manage-list">
-                    {adminsList.map((a) => (
-                      <div key={a.username} className="result-item">
-                        <strong>{a.username}</strong>
-                        <span className="badge">{a.role === "root" ? "root" : "管理员"}</span>
-                        <span>{classes.find((c) => c.id === a.class_id)?.name || "全部班级"}</span>
-                        {a.role !== "root" && (
-                          <button className="btn small danger" onClick={() => setDeleteAdminTarget(a.username)}>删除</button>
-                        )}
-                      </div>
-                    ))}
-                  </div>
-                  <form className="apply-form" onSubmit={handleCreateAdmin}>
-                    <label>用户名 *</label>
-                    <TextField value={newAdminUser} onChange={(e) => setNewAdminUser(e.target.value)} placeholder="3-32 位字母/数字/下划线" />
-                    <label>初始密码 *</label>
-                    <input type="password" value={newAdminPass} onChange={(e) => setNewAdminPass(e.target.value)} placeholder="至少 6 位" autoComplete="off" />
-                    <label>负责班级 *</label>
-                    <Dropdown
-                      value={newAdminClass}
-                      onChange={setNewAdminClass}
-                      options={classes.map((c) => ({ value: c.id, label: c.name }))}
-                      placeholder="请选择班级"
-                    />
-                    <button type="submit" className="btn primary-btn">创建管理员</button>
-                  </form>
-                </div>
-              </>
+                <form className="apply-form" onSubmit={handleCreateClass}>
+                  <label>新增班级名称 *</label>
+                  <TextField value={newClassName} onChange={(e) => setNewClassName(e.target.value)} placeholder="如 251185Y3" />
+                  <button type="submit" className="btn primary-btn">创建班级</button>
+                </form>
+              </div>
             )}
           </div>
         )}
 
-        {tab === "ai" && token && (
+        {/* 配置 → 账号管理（root）：新增管理员账号、查看/删除现有账号 */}
+        {tab === "cfg_accounts" && token && role === "root" && (
           <div className="panel">
-            <h2>AI 设置</h2>
+            <h2>账号管理</h2>
+            <p className="hint">每个管理员只能管理其负责班级的榜单、申报审批与分数调整；昵称与头像由各账号在「个人资料」里自行设置。</p>
+            {manageMsg && <div className={`ai-msg ${manageMsg.type}`}>{manageMsg.text}</div>}
+            <div className="ai-section">
+              <h3>管理员账号</h3>
+              <div className="manage-list">
+                {adminsList.map((a) => (
+                  <div key={a.username} className="result-item">
+                    <strong>{a.username}</strong>
+                    <span className="badge">{a.role === "root" ? "超级管理员" : "管理员"}</span>
+                    <span>{a.nickname || "（未设昵称）"}</span>
+                    <span>{classes.find((c) => c.id === a.class_id)?.name || "全部班级"}</span>
+                    {a.role !== "root" && (
+                      <button className="btn small danger" onClick={() => setDeleteAdminTarget(a.username)}>删除</button>
+                    )}
+                  </div>
+                ))}
+              </div>
+              <form className="apply-form" onSubmit={handleCreateAdmin}>
+                <label>用户名 *</label>
+                <TextField value={newAdminUser} onChange={(e) => setNewAdminUser(e.target.value)} placeholder="3-32 位字母/数字/下划线" />
+                <label>初始密码 *</label>
+                <input type="password" value={newAdminPass} onChange={(e) => setNewAdminPass(e.target.value)} placeholder="至少 6 位" autoComplete="off" />
+                <label>负责班级 *</label>
+                <Dropdown
+                  value={newAdminClass}
+                  onChange={setNewAdminClass}
+                  options={classes.map((c) => ({ value: c.id, label: c.name }))}
+                  placeholder="请选择班级"
+                />
+                <button type="submit" className="btn primary-btn">创建管理员</button>
+              </form>
+            </div>
+          </div>
+        )}
+
+        {/* 配置 → 背景图案：全站外观设置，登录的管理员可改；电脑端/手机端各一套（点击即时预览，保存才落库） */}
+        {tab === "cfg_appearance" && token && (
+          <div className="panel">
+            <h2>背景图案</h2>
             <p className="hint">
-              仅管理员可见。连接设置与提示词保存后立即生效（无需重启）；API Key 只显示脱敏形式，留空表示保持不变。
+              背景图案是全站外观：保存后所有访客（含未登录）看到的都是同一个图案。电脑端与手机端可以各配一套（手机端在 ≤768px 生效），
+              每端支持四种内置图案（平铺）或导入自定义图片——自定义图一张铺满整屏、不平铺：
+              <strong>电脑端按屏幕宽度</strong>适配（图片更高时上下溢出被裁掉，建议传横图如 1600×900）、
+              <strong>手机端按屏幕高度</strong>适配（图片更宽时左右溢出被裁掉，建议传竖图）。
+              点击图案即时预览，「保存背景图案」才会生效到全站。
+            </p>
+            {bgMsg && <div className={`ai-msg ${bgMsg.type}`}>{bgMsg.text}</div>}
+            {BG_SLOTS.map((slot) => {
+              const pick = bgPick[slot.id];
+              const css = patternCss(slot.id);
+              const customImg = pick.image || bgSaved[slot.id].url;
+              return (
+                <div className="ai-section" key={slot.id}>
+                  <h3>{slot.label}</h3>
+                  <div className="bg-picker">
+                    {BG_PATTERNS.map((p) => (
+                      <button
+                        key={p.id}
+                        type="button"
+                        className={`bg-option${pick.pattern === p.id ? " active" : ""}`}
+                        aria-pressed={pick.pattern === p.id}
+                        onClick={() => { setBgPick((v) => ({ ...v, [slot.id]: { pattern: p.id, image: "" } })); setBgMsg(null); }}
+                      >
+                        <span className="bg-swatch" style={{ backgroundImage: p.image, backgroundSize: p.swatchSize }} aria-hidden="true" />
+                        {p.label}
+                      </button>
+                    ))}
+                    <button
+                      type="button"
+                      className={`bg-option${pick.pattern === "custom" ? " active" : ""}`}
+                      aria-pressed={pick.pattern === "custom"}
+                      disabled={!customImg}
+                      title={customImg ? undefined : "请先导入自定义图案"}
+                      onClick={() => { setBgPick((v) => ({ ...v, [slot.id]: { pattern: "custom", image: "" } })); setBgMsg(null); }}
+                    >
+                      <span
+                        className="bg-swatch custom"
+                        style={customImg ? { backgroundImage: `url("${customImg}")`, backgroundSize: slot.fit, backgroundPosition: "center" } : undefined}
+                        aria-hidden="true"
+                      >
+                        {!customImg && "+"}
+                      </span>
+                      自定义
+                    </button>
+                  </div>
+                  <div className="ai-actions">
+                    <label className="btn small ghost assess-file-btn">
+                      导入自定义图案
+                      <input
+                        type="file"
+                        accept="image/*"
+                        hidden
+                        onChange={(e) => { handlePickPattern(slot.id, e.target.files); e.target.value = ""; }}
+                      />
+                    </label>
+                    <span className="file-count">
+                      {customImg
+                        ? `自定义图已就绪（当前预览：${css.custom ? "自定义" : "内置图案"}）`
+                        : `尚未导入自定义图（PNG/JPG/WebP/GIF，${slot.fitText}整屏、不平铺）`}
+                    </span>
+                  </div>
+                </div>
+              );
+            })}
+            <div className="ai-actions">
+              <button
+                type="button"
+                className="btn primary-btn"
+                disabled={bgBusy || BG_SLOTS.every((s) => !patternDirty(s.id))}
+                onClick={handleSaveBg}
+              >
+                {bgBusy ? <><span className="spin" /> 保存中…</> : "保存背景图案"}
+              </button>
+              <span className="file-count">
+                当前已保存：{BG_SLOTS.map((s) => `${s.id === "desktop" ? "电脑端" : "手机端"} ${patternLabel(bgSaved[s.id])}`).join(" · ")}
+                {BG_SLOTS.some((s) => patternDirty(s.id)) && "（有未保存改动）"}
+              </span>
+            </div>
+          </div>
+        )}
+
+        {/* 配置 → 个人资料：所有登录账号都能改自己的昵称/头像 */}
+        {tab === "cfg_profile" && token && (
+          <div className="panel">
+            <h2>个人资料</h2>
+            <p className="hint">昵称与头像显示在左侧工作台和账号列表里；账号与权限由超级管理员分配。</p>
+            {profileMsg && <div className={`ai-msg ${profileMsg.type}`}>{profileMsg.text}</div>}
+            <form className="apply-form profile-form" onSubmit={handleSaveProfile}>
+              <div className="profile-avatar-row">
+                <Avatar avatar={avatarPreview} nickname={nickInput} username={account} size={72} />
+                <div className="profile-avatar-actions">
+                  <label className="btn small ghost assess-file-btn">
+                    选择头像
+                    <input type="file" accept="image/*" hidden onChange={(e) => { handlePickAvatar(e.target.files); e.target.value = ""; }} />
+                  </label>
+                  {avatarPreview && (
+                    <button type="button" className="btn small ghost" onClick={() => setAvatarPreview("")}>移除头像</button>
+                  )}
+                  <span className="file-count">支持 PNG/JPG/WebP/GIF，保存时会自动裁剪压缩</span>
+                </div>
+              </div>
+              <label>昵称（最多 24 个字，留空则显示账号名）</label>
+              <TextField value={nickInput} onChange={(e) => setNickInput(e.target.value)} placeholder={account} />
+              <label>账号</label>
+              <p className="hint">@{account} · {role === "root" ? "超级管理员（可管理全部班级与配置）" : `管理员（负责班级：${classes.find((c) => c.id === myClassId)?.name || "未分配"}）`}</p>
+              <button type="submit" className="btn primary-btn" disabled={profileBusy}>
+                {profileBusy ? <><span className="spin" /> 保存中…</> : "保存个人资料"}
+              </button>
+            </form>
+          </div>
+        )}
+
+        {tab === "cfg_model" && token && role === "root" && (
+          <div className="panel">
+            <h2>模型配置</h2>
+            <p className="hint">
+              仅超级管理员可见。连接设置与提示词保存后立即生效（无需重启）；API Key 只显示脱敏形式，留空表示保持不变。
             </p>
             {aiMsg && <div className={`ai-msg ${aiMsg.type}`}>{aiMsg.text}</div>}
             {aiMeta && aiPrompts && (
@@ -2632,7 +3065,9 @@ export default function App() {
             )}
           </div>
         )}
-      </main>
+          </main>
+        </div>
+      </div>
 
       <Modal
         open={!!clearClassTarget}
@@ -2667,7 +3102,7 @@ export default function App() {
       <Modal
         open={loginOpen}
         sheetClass="login-sheet"
-        title="管理员登录"
+        title="登录"
         showConfirm={false}
         cancelText="取消"
         onCancel={() => { setLoginOpen(false); setPassword(""); setError(""); setLoginFieldErr({}); }}
@@ -2686,7 +3121,7 @@ export default function App() {
                 setUsername(e.target.value);
                 if (loginFieldErr.username) setLoginFieldErr({ ...loginFieldErr, username: "" });
               }}
-              placeholder="请输入管理员账号"
+              placeholder="请输入账号"
               autoComplete="username"
               aria-invalid={loginFieldErr.username ? "true" : undefined}
               data-autofocus
@@ -2705,7 +3140,7 @@ export default function App() {
                 setPassword(e.target.value);
                 if (loginFieldErr.password) setLoginFieldErr({ ...loginFieldErr, password: "" });
               }}
-              placeholder="请输入管理员密码"
+              placeholder="请输入密码"
               autoComplete="current-password"
               aria-invalid={loginFieldErr.password ? "true" : undefined}
             />
