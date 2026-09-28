@@ -580,6 +580,11 @@ export default function App() {
   });
   const [bgMsg, setBgMsg] = useState(null);
   const [bgBusy, setBgBusy] = useState(false);
+  // 访客开始界面：未登录用户打开网站直接进入的界面（"" = 什么都不选，只显示侧边栏）
+  const [landingTab, setLandingTab] = useState("");
+  const [landingPick, setLandingPick] = useState("");
+  const [landingMsg, setLandingMsg] = useState(null);
+  const [landingBusy, setLandingBusy] = useState(false);
   const [tab, setTab] = useState(""); // 空串 = 刚进入，只显示侧边栏，等用户点具体界面
   const schTabRef = useRef("board"); // 记住「奖学金评定」界面内最后停留的子页面
   const [loginOpen, setLoginOpen] = useState(false);
@@ -604,6 +609,8 @@ export default function App() {
   const [awards, setAwards] = useState([]);
   const [awardsLoading, setAwardsLoading] = useState(false);
   const [awardQuery, setAwardQuery] = useState("");
+  const [awardSuggestOpen, setAwardSuggestOpen] = useState(false);
+  const [awardSuggestIdx, setAwardSuggestIdx] = useState(-1); // 键盘高亮项（替代原生 datalist 的方向键选择）
   const [awardCategory, setAwardCategory] = useState("");
   const [awardStatus, setAwardStatus] = useState("");
   // 审批列表分批渲染：首屏 4 条，滚动到接近底部时自动追加 4 条（筛选/班级/Tab 变化时重置）
@@ -810,7 +817,7 @@ export default function App() {
     loadClasses().then(() => setMounted(true));
   }, [token, role, myClassId]);
 
-  // 背景图案是全站设置，公开接口：访客也要按管理员保存的图案渲染（电脑端/手机端各一套）
+  // 背景图案与访客开始界面是全站设置，公开接口：访客也要按管理员保存的值渲染
   useEffect(() => {
     getAppearance()
       .then((d) => {
@@ -819,6 +826,14 @@ export default function App() {
           desktop: { pattern: d.desktop.pattern, image: "" },
           mobile: { pattern: d.mobile.pattern, image: "" }
         });
+        const landing = PUBLIC_TABS.includes(d.landing) ? d.landing : "";
+        setLandingTab(landing);
+        setLandingPick(landing);
+        if (!token && landing) {
+          // 访客直接落到配置的开始界面；用户已抢先点了别的界面则不打扰
+          setTab((t) => (t === "" ? landing : t));
+          schTabRef.current = landing;
+        }
       })
       .catch(() => {});
   }, []);
@@ -1043,7 +1058,8 @@ export default function App() {
     setMyClassId("");
     setAccount("");
     setProfile({ nickname: "", avatar: "" });
-    setTab((t) => (PUBLIC_TABS.includes(t) ? t : "")); // 登录态专属界面（数据管理/配置）随之退出
+    // 退出后成为访客：回到配置的「开始界面」（未配置则只显示侧边栏）
+    setTab((t) => (PUBLIC_TABS.includes(t) ? t : landingTab)); // 登录态专属界面（数据管理/配置）随之退出
     setLoginNotice(msg || "登录已过期，请重新登录");
     setLoginOpen(true);
   }
@@ -1058,7 +1074,7 @@ export default function App() {
     setMyClassId("");
     setAccount("");
     setProfile({ nickname: "", avatar: "" });
-    setTab((t) => (PUBLIC_TABS.includes(t) ? t : ""));
+    setTab((t) => (PUBLIC_TABS.includes(t) ? t : landingTab));
     setLoginNotice("");
   }
 
@@ -1160,6 +1176,25 @@ export default function App() {
       setBgMsg({ type: "err", text: err.message });
     } finally {
       setBgBusy(false);
+    }
+  }
+
+  // ---------- 开始界面（未登录访客进入网站时看到的界面） ----------
+  async function handleSaveLanding() {
+    setLandingBusy(true);
+    setLandingMsg(null);
+    try {
+      const d = await saveAppearance({ landing: landingPick }, token);
+      setLandingTab(d.landing || "");
+      setLandingPick(d.landing || "");
+      setLandingMsg({
+        type: "ok",
+        text: d.landing ? `已保存：访客进入网站直接看到「${TAB_LABELS[d.landing]}」` : "已保存：访客进入网站只显示侧边栏，自行点选界面",
+      });
+    } catch (err) {
+      setLandingMsg({ type: "err", text: err.message });
+    } finally {
+      setLandingBusy(false);
     }
   }
 
@@ -1276,7 +1311,7 @@ export default function App() {
       const res = await importSecondClass(scFile, token, target, threshold);
       setScMsg({
         type: "ok",
-        text: `导入完成：${res.qualified} 人达标（学分≥${res.threshold}），已对 ${res.applied} 人德育 +10 分；重复导入自动先撤后加，不会重复累加。${res.skipped && res.skipped.length ? `跳过 ${res.skipped.length} 个不在本班榜单的学号。` : ""}`,
+        text: `导入完成：${res.qualified} 人达标（学分≥${res.threshold}），已对 ${res.applied} 人德育 +10 分，并生成自动通过的德育申报记录（申报列表可见）；重复导入自动先撤后加，不会重复累加。${res.skipped && res.skipped.length ? `跳过 ${res.skipped.length} 个不在本班榜单的学号。` : ""}`,
       });
       setScFile(null);
       await loadBoard(classSel);
@@ -1786,19 +1821,23 @@ export default function App() {
   const pendingCount = awards.filter((a) => a.approved === "否").length;
   const awardQueryTrim = awardQuery.trim();
   const awardTokens = awardQueryTrim ? awardQueryTrim.split(/\s+/).filter(Boolean) : [];
-  const awardTokenHit = (a, t) => {
-    let re = null;
-    try {
-      re = new RegExp(t, "i");
-    } catch {
-      re = null; // 无效正则回退为普通包含匹配
+  // 搜索词 → 匹配函数：/.../ 包裹按正则（写错退回字面），其余字面包含、忽略大小写。
+  // 普通关键词里的 . ? + ( 等若被静默当正则，会出现意外全中（"三?" 等价空匹配）或意外漏配
+  const awardTokenMatcher = (t) => {
+    if (t.length > 2 && t.startsWith("/") && t.endsWith("/")) {
+      try {
+        const re = new RegExp(t.slice(1, -1), "i");
+        return (text) => re.test(text);
+      } catch {
+        // 正则写错时退回字面搜索，至少还能搜到内容
+      }
     }
-    return re
-      ? re.test(a.sid) || re.test(a.name || "")
-      : a.sid.toLowerCase().includes(t.toLowerCase()) || (a.name || "").toLowerCase().includes(t.toLowerCase());
+    const low = t.toLowerCase();
+    return (text) => (text || "").toLowerCase().includes(low);
   };
+  const awardMatchers = awardTokens.map(awardTokenMatcher);
   const filteredAwards = awards.filter((a) => {
-    if (awardTokens.length && !awardTokens.some((t) => awardTokenHit(a, t))) {
+    if (awardMatchers.length && !awardMatchers.some((m) => m(a.sid) || m(a.name || ""))) {
       return false; // 模糊搜索：空格分隔的多个片段，任一片段命中即通过
     }
     return (!awardCategory || a.category === awardCategory) && (!awardStatus || a.approved === awardStatus);
@@ -1806,6 +1845,38 @@ export default function App() {
   const awardStudentOptions = [
     ...new Map(awards.map((a) => [a.sid, `${a.sid} ${a.name}`])).values(),
   ];
+  // 自动补全建议：与搜索框同一套匹配规则（datalist 原生只按字面过滤，匹配不了 /正则/）
+  const awardSuggestOptions = awardSuggestOpen
+    ? (awardMatchers.length
+        ? awardStudentOptions.filter((v) => awardMatchers.some((m) => m(v)))
+        : awardStudentOptions
+      ).slice(0, 10)
+    : [];
+  const awardSuggestPick = (v) => {
+    setAwardQuery(v);
+    setAwardSuggestOpen(false);
+    setAwardSuggestIdx(-1);
+  };
+  // 输入框键盘导航：↑↓ 在建议间移动、回车确认、Esc 关闭（对齐原生 datalist 的手感）
+  const awardSuggestKeyDown = (e) => {
+    if (e.key === "Escape") {
+      setAwardSuggestOpen(false);
+      setAwardSuggestIdx(-1);
+      return;
+    }
+    if (!awardSuggestOptions.length) return;
+    if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+      e.preventDefault();
+      setAwardSuggestIdx((i) => {
+        const last = awardSuggestOptions.length - 1;
+        if (e.key === "ArrowDown") return i >= last ? 0 : i + 1;
+        return i <= 0 ? last : i - 1;
+      });
+    } else if (e.key === "Enter" && awardSuggestIdx >= 0 && awardSuggestIdx < awardSuggestOptions.length) {
+      e.preventDefault();
+      awardSuggestPick(awardSuggestOptions[awardSuggestIdx]);
+    }
+  };
 
   // 滚动预加载：列表底部哨兵进入「视口下方 400px」范围即自动追加一批，替代手动「显示更多」
   // 依赖 visibleCount 重建观察器：新建的观察器会立刻上报一次当前相交状态，因此一批加完后
@@ -1862,8 +1933,6 @@ export default function App() {
       }}
     >
       <div className="bg-grid" />
-      <div className="bg-glow glow-1" />
-      <div className="bg-glow glow-2" />
       <header className="topbar">
         <div className="brand">
           <h1>anticlass</h1>
@@ -1918,6 +1987,7 @@ export default function App() {
                 <button className={navItemCls(tab === "cfg_accounts")} onClick={() => switchTab("cfg_accounts")}>账号管理</button>
               )}
               <button className={navItemCls(tab === "cfg_appearance")} onClick={() => switchTab("cfg_appearance")}>背景图案</button>
+              <button className={navItemCls(tab === "cfg_landing")} onClick={() => switchTab("cfg_landing")}>开始界面</button>
               <button className={navItemCls(tab === "cfg_profile")} onClick={() => switchTab("cfg_profile")}>个人资料</button>
             </div>
           )}
@@ -2593,12 +2663,12 @@ export default function App() {
                   />
                   {batchFiles.length > 0 && <span className="file-count">已选 {batchFiles.length} 个文件</span>}
                   <button type="submit" className="btn primary-btn" disabled={batchBusy}>
-                    {batchBusy ? <><span className="spin" /> 提交中…</> : "批量生成加分申报"}
+                    {batchBusy ? <><span className="spin" /> 提交中…</> : "批量加分（自动通过）"}
                   </button>
                 </form>
                 {batchResult && (
                   <div className="apply-result">
-                    <h3>已为 {batchResult.length} 名学生生成待审批申报</h3>
+                    <h3>已为 {batchResult.length} 名学生自动通过并加分</h3>
                     {batchResult.map((r) => (
                       <div key={r.id} className="result-item">
                         <span className="badge">{r.category}</span>
@@ -2634,18 +2704,35 @@ export default function App() {
               {!token && " 点击右上角「登录」进行审批。"}
             </p>
             <div className="filter-bar">
-              <input
-                className="filter-input"
-                placeholder="学号 / 姓名（支持正则与空格分隔模糊搜索）"
-                value={awardQuery}
-                list="award-student-list"
-                onChange={(e) => setAwardQuery(e.target.value)}
-              />
-              <datalist id="award-student-list">
-                {awardStudentOptions.map((v) => (
-                  <option key={v} value={v} />
-                ))}
-              </datalist>
+              <div className="award-search">
+                <input
+                  className="filter-input"
+                  placeholder="学号 / 姓名（空格分隔模糊搜索，/正则/ 按正则匹配）"
+                  value={awardQuery}
+                  autoComplete="off"
+                  onChange={(e) => { setAwardQuery(e.target.value); setAwardSuggestIdx(-1); }}
+                  onFocus={() => setAwardSuggestOpen(true)}
+                  onBlur={() => setAwardSuggestOpen(false)}
+                  onKeyDown={awardSuggestKeyDown}
+                />
+                {awardSuggestOptions.length > 0 && (
+                  <div className="award-suggest">
+                    {awardSuggestOptions.map((v, i) => (
+                      <button
+                        key={v}
+                        type="button"
+                        className={i === awardSuggestIdx ? "picked" : ""}
+                        // mousedown 阻止默认行为，避免输入框先失焦把建议列表收掉
+                        onMouseDown={(e) => e.preventDefault()}
+                        onMouseEnter={() => setAwardSuggestIdx(i)}
+                        onClick={() => awardSuggestPick(v)}
+                      >
+                        {v}
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
               <Dropdown
                 value={awardCategory}
                 onChange={setAwardCategory}
@@ -2710,7 +2797,7 @@ export default function App() {
             </div>
             <div className="ai-section">
               <h3>第二课堂导入</h3>
-              <p className="hint">上传第二课堂统计 xlsx（含「学号」「学分」列），对学分达到阈值的学生德育加 10 分；未达标与名单外学生不变。同一班级重复导入会自动先撤销上次加的 10 分再按新文件重加，不会重复累加。</p>
+              <p className="hint">上传第二课堂统计 xlsx（含「学号」「学分」列），对学分达到阈值的学生德育加 10 分并生成自动通过的德育申报记录；未达标与名单外学生不变。同一班级重复导入会自动先撤销上次加的 10 分再按新文件重加，不会重复累加。</p>
               <button
                 className="btn primary-btn"
                 onClick={() => { setScMsg(null); setScFile(null); setScOpen(true); }}
@@ -2899,6 +2986,41 @@ export default function App() {
                 当前已保存：{BG_SLOTS.map((s) => `${s.id === "desktop" ? "电脑端" : "手机端"} ${patternLabel(bgSaved[s.id])}`).join(" · ")}
                 {BG_SLOTS.some((s) => patternDirty(s.id)) && "（有未保存改动）"}
               </span>
+            </div>
+          </div>
+        )}
+
+        {/* 配置 → 开始界面：未登录访客进入网站时直接看到的界面 */}
+        {tab === "cfg_landing" && token && (
+          <div className="panel">
+            <h2>开始界面</h2>
+            <p className="hint">
+              选择未登录访客打开网站时直接进入的界面（登录用户不受影响，仍只显示侧边栏）。
+              「什么都不选」保持默认行为：只显示侧边栏，由访客自己点选。退出登录 / 会话过期的用户也会回到这里。
+            </p>
+            {landingMsg && <div className={`ai-msg ${landingMsg.type}`}>{landingMsg.text}</div>}
+            <div className="apply-form">
+              <label>访客开始界面</label>
+              <select value={landingPick} onChange={(e) => { setLandingPick(e.target.value); setLandingMsg(null); }}>
+                <option value="">什么都不选（默认，只显示侧边栏）</option>
+                {PUBLIC_TABS.map((t) => (
+                  <option key={t} value={t}>{TAB_LABELS[t]}</option>
+                ))}
+              </select>
+              <div className="ai-actions">
+                <button
+                  type="button"
+                  className="btn primary-btn"
+                  disabled={landingBusy || landingPick === landingTab}
+                  onClick={handleSaveLanding}
+                >
+                  {landingBusy ? <><span className="spin" /> 保存中…</> : "保存开始界面"}
+                </button>
+                <span className="file-count">
+                  当前：{landingTab ? `访客进入直接看到「${TAB_LABELS[landingTab]}」` : "什么都不选（只显示侧边栏）"}
+                  {landingPick !== landingTab && "（有未保存改动）"}
+                </span>
+              </div>
             </div>
           </div>
         )}
@@ -3199,7 +3321,7 @@ export default function App() {
         cancelText="关闭"
         onCancel={() => { setScOpen(false); setScMsg(null); }}
       >
-        <p className="hint">上传后对学分达到阈值的学生德育加 10 分，重复导入自动先撤后加、不会重复累加。</p>
+        <p className="hint">上传后对学分达到阈值的学生德育加 10 分，并生成自动通过的德育申报记录（申报列表可见）；重复导入自动先撤后加、不会重复累加。</p>
         <form className="apply-form" onSubmit={handleImportSecondClass}>
           {role === "root" ? (
             <>

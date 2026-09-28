@@ -346,13 +346,18 @@ def list_adjust_log(limit=500):
         return [{k: _plain(v) for k, v in r.items()} for r in cur.fetchall()]
 
 
-def apply_secondclass(class_id, ops, meta_key, meta_value):
-    """第二课堂导入：单事务内批量调 deyu 并留痕 adjust_log，最后写 meta。
+def apply_secondclass(class_id, ops, meta_key, meta_value, records=(), delete_aids=()):
+    """第二课堂导入：单事务内批量调 deyu 并留痕 adjust_log，删除上次导入的申报记录、
+    写入本次自动通过的申报记录，最后写 meta。
 
     ops: list[dict]，每项 {sid, name, field, op('add'/'sub'), points, old, new}
     — 调用方已算好 old/new（含封顶/下限）与 total，这里按 new 写回 students 并同步 total。
+    records/delete_aids: 本次导入生成的申报记录（与 insert_awards 同构）与上次导入的记录 id，
+    调分与记录必须同事务，否则中途失败会出现「分已动、记录还在」的双重撤销。
     """
     with tx() as cur:
+        for aid in delete_aids:
+            cur.execute("DELETE FROM awards WHERE id=%s", (aid,))
         for e in ops:
             cur.execute(
                 "UPDATE students SET `deyu`=%s, total=%s WHERE sid=%s AND class_id=%s",
@@ -368,6 +373,16 @@ def apply_secondclass(class_id, ops, meta_key, meta_value):
                 (
                     e["created_at"], e["sid"], e["name"], "deyu", e["op"],
                     round(float(e["points"]), 2), round(float(e["old"]), 2), round(float(e["new"]), 2),
+                ),
+            )
+        for r in records:
+            cur.execute(
+                "INSERT INTO awards (id,sid,name,class_id,category,points,basis,evidence,folder,approved,reject_reason,created_at) "
+                "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
+                (
+                    r["id"], r["sid"], r["name"], r.get("class_id", ""), r["category"], round(float(r["points"]), 1),
+                    r["basis"], json.dumps(r["evidence"], ensure_ascii=False), r["folder"],
+                    r["approved"], r.get("reject_reason", "") or "", r["created_at"],
                 ),
             )
         cur.execute(

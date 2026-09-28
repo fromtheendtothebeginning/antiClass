@@ -1,45 +1,49 @@
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=Noto+Sans+SC:wght@300;400;500;700&display=swap');
-
+/* 设计体系：Apple Style（2026-09-28 整站换肤）——黑白灰 + Apple 蓝点缀，无渐变、无光晕、中性微阴影。
+   --accent-1 = Apple 蓝（主强调）；--accent-2 = 琥珀橙，只用于「待审批/警告」语义色。
+   动效统一走 --ease-apple，可交互元素按压有 active:scale 阻尼感。 */
 :root {
-  --bg-primary: #f8f9fa;
+  --bg-primary: #f5f5f7;
   --bg-card: #ffffff;
-  --bg-elevated: #f5f5f8;
+  --bg-elevated: #f5f5f7;
 
-  --text-primary: #1a1a2e;
-  --text-secondary: #3a3a4e;
-  --text-muted: #4a4a5e;
+  --text-primary: #1d1d1f;
+  --text-secondary: #6e6e73;
+  --text-muted: #86868b;
 
-  --accent-1: #6c5ce7;
-  --accent-1-light: #8b7cf7;
-  --accent-1-hover: #5a4bd6;
-  --accent-1-soft: rgba(108, 92, 231, 0.1);
-  --accent-1-soft-strong: rgba(108, 92, 231, 0.15);
-  --accent-1-border: rgba(108, 92, 231, 0.3);
+  --accent-1: #0071e3;
+  --accent-1-light: #2997ff;
+  --accent-1-hover: #0077ed;
+  --accent-1-soft: rgba(0, 113, 227, 0.08);
+  --accent-1-soft-strong: rgba(0, 113, 227, 0.14);
+  --accent-1-border: rgba(0, 113, 227, 0.35);
 
-  --accent-2: #00cec9;
-  --accent-2-hover: #00b894;
-  --accent-2-soft: rgba(0, 206, 201, 0.15);
+  --accent-2: #b45309;
+  --accent-2-hover: #92400e;
+  --accent-2-soft: rgba(255, 149, 0, 0.14);
+  --accent-2-border: rgba(255, 149, 0, 0.4);
 
-  --success: #0d9d6c;
-  --success-soft: rgba(13, 157, 108, 0.12);
+  --success: #248a3d;
+  --success-soft: rgba(52, 199, 89, 0.14);
 
-  --danger: #e74c3c;
-  --danger-hover: #c0392b;
-  --danger-soft: rgba(231, 76, 60, 0.1);
-  --danger-soft-strong: rgba(231, 76, 60, 0.15);
-  --danger-border: rgba(231, 76, 60, 0.3);
+  --danger: #d70015;
+  --danger-hover: #b3000f;
+  --danger-soft: rgba(255, 59, 48, 0.1);
+  --danger-soft-strong: rgba(255, 59, 48, 0.15);
+  --danger-border: rgba(255, 59, 48, 0.35);
 
   --white: #ffffff;
-  --border-color: #e2e2ef;
-  --neutral-soft: #e8e8e8;
-  --neutral-soft-hover: #d0d0d0;
-  --overlay: rgba(0, 0, 0, 0.68);
-  --top3-soft: rgba(253, 121, 168, 0.08);
+  --border-color: #d2d2d7;
+  --neutral-soft: #e8e8ed;
+  --neutral-soft-hover: #d2d2d7;
+  --overlay: rgba(0, 0, 0, 0.45);
+  --top3-soft: rgba(0, 0, 0, 0.045);
 
-  --glow-accent: rgba(108, 92, 231, 0.08);
-  --glow-accent-strong: rgba(108, 92, 231, 0.4);
-  --glow-cyan: rgba(0, 206, 201, 0.06);
-  --glow-cyan-strong: rgba(0, 206, 201, 0.4);
+  --shadow-sm: 0 2px 8px rgba(0, 0, 0, 0.04);
+  --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.08);
+  --shadow-lg: 0 8px 24px rgba(0, 0, 0, 0.12);
+  --ring: 0 0 0 4px rgba(0, 113, 227, 0.25);
+
+  --ease-apple: cubic-bezier(0.25, 0.1, 0.25, 1);
 
   --max-width: 1200px;
   color-scheme: light;
@@ -47,76 +51,78 @@
 
 /* 显式深色：以下深色块与下方 @media 内的深色块必须逐条保持一致（同一套深色值），改一处必须同步另一处 */
 :root[data-theme='dark'] {
-  --bg-primary: #0f1014;
-  --bg-card: #1a1b22;
-  --bg-elevated: #23242e;
-  --text-primary: #e8e8f0;
-  --text-secondary: #b0b2c0;
-  --text-muted: #7a7c8c;
-  --accent-1: #7c6cf0;
-  --accent-1-light: #9d8ffa;
-  --accent-1-hover: #8a7bf5;
-  --accent-1-soft: rgba(124, 108, 240, 0.2);
-  --accent-1-soft-strong: rgba(124, 108, 240, 0.28);
-  --accent-1-border: rgba(124, 108, 240, 0.45);
-  --accent-2: #2ee6e0;
-  --accent-2-hover: #3af0c0;
-  --accent-2-soft: rgba(46, 230, 224, 0.22);
-  --success: #3ddc97;
-  --success-soft: rgba(61, 220, 151, 0.18);
-  --danger: #e0503f;
-  --danger-hover: #ef6a55;
-  --danger-soft: rgba(240, 106, 88, 0.18);
-  --danger-soft-strong: rgba(240, 106, 88, 0.26);
-  --danger-border: rgba(240, 106, 88, 0.45);
+  --bg-primary: #000000;
+  --bg-card: #1c1c1e;
+  --bg-elevated: #2c2c2e;
+  --text-primary: #f5f5f7;
+  --text-secondary: #a1a1a6;
+  --text-muted: #8e8e93;
+  --accent-1: #0a84ff;
+  --accent-1-light: #409cff;
+  --accent-1-hover: #3395ff;
+  --accent-1-soft: rgba(10, 132, 255, 0.2);
+  --accent-1-soft-strong: rgba(10, 132, 255, 0.28);
+  --accent-1-border: rgba(10, 132, 255, 0.45);
+  --accent-2: #ff9f0a;
+  --accent-2-hover: #ffb340;
+  --accent-2-soft: rgba(255, 159, 10, 0.16);
+  --accent-2-border: rgba(255, 159, 10, 0.4);
+  --success: #30d158;
+  --success-soft: rgba(48, 209, 88, 0.18);
+  --danger: #ff453a;
+  --danger-hover: #ff6961;
+  --danger-soft: rgba(255, 69, 58, 0.16);
+  --danger-soft-strong: rgba(255, 69, 58, 0.24);
+  --danger-border: rgba(255, 69, 58, 0.45);
   --white: #ffffff;
-  --border-color: #2e2f3a;
-  --neutral-soft: #33343f;
-  --neutral-soft-hover: #3d3e4b;
-  --overlay: rgba(0, 0, 0, 0.78);
-  --top3-soft: rgba(253, 121, 168, 0.16);
-  --glow-accent: rgba(124, 108, 240, 0.15);
-  --glow-accent-strong: rgba(124, 108, 240, 0.5);
-  --glow-cyan: rgba(46, 230, 224, 0.1);
-  --glow-cyan-strong: rgba(46, 230, 224, 0.5);
+  --border-color: #38383a;
+  --neutral-soft: #3a3a3c;
+  --neutral-soft-hover: #48484a;
+  --overlay: rgba(0, 0, 0, 0.6);
+  --top3-soft: rgba(255, 255, 255, 0.06);
+  --shadow-sm: 0 2px 8px rgba(0, 0, 0, 0.3);
+  --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.4);
+  --shadow-lg: 0 8px 24px rgba(0, 0, 0, 0.5);
+  --ring: 0 0 0 4px rgba(10, 132, 255, 0.35);
   color-scheme: dark;
 }
 
 /* 跟随系统深色：与上方 :root[data-theme='dark'] 必须逐条保持一致（同一套深色值），改一处必须同步另一处 */
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme]) {
-    --bg-primary: #0f1014;
-    --bg-card: #1a1b22;
-    --bg-elevated: #23242e;
-    --text-primary: #e8e8f0;
-    --text-secondary: #b0b2c0;
-    --text-muted: #7a7c8c;
-    --accent-1: #7c6cf0;
-    --accent-1-light: #9d8ffa;
-    --accent-1-hover: #8a7bf5;
-    --accent-1-soft: rgba(124, 108, 240, 0.2);
-    --accent-1-soft-strong: rgba(124, 108, 240, 0.28);
-    --accent-1-border: rgba(124, 108, 240, 0.45);
-    --accent-2: #2ee6e0;
-    --accent-2-hover: #3af0c0;
-    --accent-2-soft: rgba(46, 230, 224, 0.22);
-    --success: #3ddc97;
-    --success-soft: rgba(61, 220, 151, 0.18);
-    --danger: #e0503f;
-    --danger-hover: #ef6a55;
-    --danger-soft: rgba(240, 106, 88, 0.18);
-    --danger-soft-strong: rgba(240, 106, 88, 0.26);
-    --danger-border: rgba(240, 106, 88, 0.45);
+    --bg-primary: #000000;
+    --bg-card: #1c1c1e;
+    --bg-elevated: #2c2c2e;
+    --text-primary: #f5f5f7;
+    --text-secondary: #a1a1a6;
+    --text-muted: #8e8e93;
+    --accent-1: #0a84ff;
+    --accent-1-light: #409cff;
+    --accent-1-hover: #3395ff;
+    --accent-1-soft: rgba(10, 132, 255, 0.2);
+    --accent-1-soft-strong: rgba(10, 132, 255, 0.28);
+    --accent-1-border: rgba(10, 132, 255, 0.45);
+    --accent-2: #ff9f0a;
+    --accent-2-hover: #ffb340;
+    --accent-2-soft: rgba(255, 159, 10, 0.16);
+    --accent-2-border: rgba(255, 159, 10, 0.4);
+    --success: #30d158;
+    --success-soft: rgba(48, 209, 88, 0.18);
+    --danger: #ff453a;
+    --danger-hover: #ff6961;
+    --danger-soft: rgba(255, 69, 58, 0.16);
+    --danger-soft-strong: rgba(255, 69, 58, 0.24);
+    --danger-border: rgba(255, 69, 58, 0.45);
     --white: #ffffff;
-    --border-color: #2e2f3a;
-    --neutral-soft: #33343f;
-    --neutral-soft-hover: #3d3e4b;
-    --overlay: rgba(0, 0, 0, 0.78);
-    --top3-soft: rgba(253, 121, 168, 0.16);
-    --glow-accent: rgba(124, 108, 240, 0.15);
-    --glow-accent-strong: rgba(124, 108, 240, 0.5);
-    --glow-cyan: rgba(46, 230, 224, 0.1);
-    --glow-cyan-strong: rgba(46, 230, 224, 0.5);
+    --border-color: #38383a;
+    --neutral-soft: #3a3a3c;
+    --neutral-soft-hover: #48484a;
+    --overlay: rgba(0, 0, 0, 0.6);
+    --top3-soft: rgba(255, 255, 255, 0.06);
+    --shadow-sm: 0 2px 8px rgba(0, 0, 0, 0.3);
+    --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.4);
+    --shadow-lg: 0 8px 24px rgba(0, 0, 0, 0.5);
+    --ring: 0 0 0 4px rgba(10, 132, 255, 0.35);
     color-scheme: dark;
   }
 }
@@ -133,7 +139,8 @@ html {
 }
 
 body {
-  font-family: 'Inter', 'Noto Sans SC', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Helvetica Neue',
+    'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', 'Segoe UI', sans-serif;
   background-color: var(--bg-primary);
   color: var(--text-primary);
   line-height: 1.6;
@@ -185,42 +192,12 @@ button {
   }
 }
 
-.bg-glow {
-  position: fixed;
-  border-radius: 50%;
-  filter: blur(100px);
-  pointer-events: none;
-  z-index: 0;
-  opacity: 0;
-  transition: opacity 1.5s ease;
-}
-
-.mounted .bg-glow {
-  opacity: 1;
-}
-
-.glow-1 {
-  width: 600px;
-  height: 600px;
-  top: -200px;
-  right: -100px;
-  background: radial-gradient(circle, var(--accent-1-soft-strong), transparent 70%);
-}
-
-.glow-2 {
-  width: 500px;
-  height: 500px;
-  bottom: -150px;
-  left: -100px;
-  background: radial-gradient(circle, var(--glow-cyan), transparent 70%);
-}
-
 /* ---------- 滚动揭示动画 ---------- */
 .scroll-reveal {
   opacity: 0;
-  transform: translateY(48px);
-  transition: opacity 0.7s cubic-bezier(0.22, 1, 0.36, 1),
-              transform 0.7s cubic-bezier(0.22, 1, 0.36, 1);
+  transform: translateY(20px);
+  transition: opacity 0.5s var(--ease-apple),
+              transform 0.5s var(--ease-apple);
 }
 
 .scroll-reveal.revealed {
@@ -237,7 +214,7 @@ button {
   min-height: 100vh;
 }
 
-.page > *:not(.bg-grid):not(.bg-glow):not(.modal-overlay) {
+.page > *:not(.bg-grid):not(.modal-overlay) {
   position: relative;
   z-index: 1;
 }
@@ -262,12 +239,9 @@ button {
 
 .brand h1 {
   font-size: 22px;
-  font-weight: 700;
+  font-weight: 600;
   letter-spacing: -0.02em;
-  background: linear-gradient(135deg, var(--accent-1), var(--accent-2));
-  -webkit-background-clip: text;
-  background-clip: text;
-  -webkit-text-fill-color: transparent;
+  color: var(--text-primary);
 }
 
 .meta {
@@ -294,24 +268,24 @@ button {
   padding: 0 20px;
   font-size: 13px;
   font-weight: 600;
-  border-radius: 10px;
+  border-radius: 980px;
   cursor: pointer;
   border: none;
-  background: linear-gradient(135deg, var(--accent-1), var(--accent-1-light));
+  background: var(--accent-1);
   color: var(--white);
-  box-shadow: 0 2px 10px var(--accent-1-border);
-  transition: all 0.2s;
+  transition: background-color 0.2s var(--ease-apple), color 0.2s var(--ease-apple),
+    box-shadow 0.2s var(--ease-apple), transform 0.15s var(--ease-apple);
   white-space: nowrap;
 }
 
 .btn:hover:not(:disabled) {
-  color: var(--white);
-  transform: translateY(-1px);
-  box-shadow: 0 4px 16px var(--glow-accent-strong);
+  background: var(--accent-1-hover);
+  box-shadow: var(--shadow-sm);
 }
 
 .btn:active:not(:disabled) {
-  transform: translateY(0);
+  transform: scale(0.96);
+  transition-duration: 0.08s;
 }
 
 .btn:disabled {
@@ -323,27 +297,27 @@ button {
   background: transparent;
   border: 1px solid var(--border-color);
   color: var(--text-secondary);
-  box-shadow: none;
 }
 
 .btn.ghost:hover:not(:disabled) {
+  background: transparent;
   border-color: var(--accent-1);
   color: var(--accent-1);
+  box-shadow: none;
 }
 
 .btn.small {
   height: 32px;
   padding: 0 14px;
   font-size: 12px;
-  border-radius: 8px;
 }
 
 .btn.danger {
-  background: linear-gradient(135deg, var(--danger), var(--danger-hover));
-  box-shadow: 0 2px 10px var(--danger-soft-strong);
+  background: var(--danger);
 }
 
 .btn.danger:hover:not(:disabled) {
+  background: var(--danger-hover);
   color: var(--white);
 }
 
@@ -353,17 +327,23 @@ button {
   justify-content: center;
   padding: 10px;
   font-size: 14px;
-  border-radius: 8px;
+  border-radius: 980px;
   cursor: pointer;
   text-align: center;
   border: 1px solid var(--border-color);
   background: var(--neutral-soft);
   color: var(--text-secondary);
-  transition: all 0.2s;
+  transition: background-color 0.2s var(--ease-apple), color 0.2s var(--ease-apple),
+    transform 0.15s var(--ease-apple);
 }
 
 .btn-secondary:hover {
   background: var(--neutral-soft-hover);
+}
+
+.btn-secondary:active:not(:disabled) {
+  transform: scale(0.96);
+  transition-duration: 0.08s;
 }
 
 .btn-danger {
@@ -372,17 +352,22 @@ button {
   justify-content: center;
   padding: 10px;
   font-size: 14px;
-  border-radius: 8px;
+  border-radius: 980px;
   cursor: pointer;
   text-align: center;
   border: none;
   background: var(--danger);
   color: var(--white);
-  transition: all 0.2s;
+  transition: background-color 0.2s var(--ease-apple), transform 0.15s var(--ease-apple);
 }
 
 .btn-danger:hover {
   background: var(--danger-hover);
+}
+
+.btn-danger:active:not(:disabled) {
+  transform: scale(0.96);
+  transition-duration: 0.08s;
 }
 
 .btn-danger:disabled {
@@ -394,20 +379,25 @@ button {
   width: 100%;
   margin-top: 22px;
   padding: 11px;
-  background: linear-gradient(135deg, var(--accent-1), var(--accent-1-light));
+  background: var(--accent-1);
   color: var(--white);
   border: none;
-  border-radius: 10px;
+  border-radius: 980px;
   font-size: 15px;
   font-weight: 600;
   cursor: pointer;
-  box-shadow: 0 4px 16px var(--accent-1-border);
-  transition: all 0.2s;
+  transition: background-color 0.2s var(--ease-apple), box-shadow 0.2s var(--ease-apple),
+    transform 0.15s var(--ease-apple);
 }
 
 .primary:hover {
-  transform: translateY(-1px);
-  box-shadow: 0 6px 20px var(--glow-accent-strong);
+  background: var(--accent-1-hover);
+  box-shadow: var(--shadow-sm);
+}
+
+.primary:active:not(:disabled) {
+  transform: scale(0.98);
+  transition-duration: 0.08s;
 }
 
 .primary-btn {
@@ -451,7 +441,7 @@ button {
   gap: 4px;
   margin-bottom: 20px;
   flex-wrap: wrap;
-  border-bottom: 2px solid var(--border-color);
+  border-bottom: 1px solid var(--border-color);
   position: relative;
 }
 
@@ -465,13 +455,13 @@ button {
 .tab {
   background: transparent;
   border: none;
-  color: var(--text-primary);
+  color: var(--text-secondary);
   padding: 11px 20px;
   font-size: 14px;
   font-weight: 500;
   cursor: pointer;
-  border-bottom: 3px solid transparent;
-  transition: color 0.25s, background 0.25s, transform 0.15s;
+  border-bottom: 2px solid transparent;
+  transition: color 0.25s var(--ease-apple), background 0.25s var(--ease-apple), transform 0.15s var(--ease-apple);
   border-radius: 10px 10px 0 0;
   position: relative;
   letter-spacing: 0.3px;
@@ -480,35 +470,17 @@ button {
 .tab:hover {
   color: var(--text-primary);
   background: var(--accent-1-soft);
-  transform: translateY(-1px);
 }
 
 .tab:active {
-  transform: translateY(0) scale(0.97);
+  transform: scale(0.97);
   transition: transform 0.08s;
 }
 
 .tab.active {
-  color: var(--text-primary);
-  background: var(--accent-1-soft-strong);
+  color: var(--accent-1);
   border-bottom-color: var(--accent-1);
   font-weight: 600;
-}
-
-.tab.active::after {
-  content: '';
-  position: absolute;
-  bottom: -2px;
-  left: 0;
-  right: 0;
-  height: 3px;
-  background: linear-gradient(90deg, transparent, var(--accent-2), transparent);
-  animation: tabUnderline 0.4s ease;
-}
-
-@keyframes tabUnderline {
-  from { transform: scaleX(0); opacity: 0; }
-  to { transform: scaleX(1); opacity: 1; }
 }
 
 /* ---------- 错误 / 加载 ---------- */
@@ -541,7 +513,7 @@ button {
   border: 1px solid var(--border-color);
   border-radius: 16px;
   overflow: hidden;
-  box-shadow: 0 4px 24px var(--glow-accent);
+  box-shadow: var(--shadow-sm);
 }
 
 .board {
@@ -570,7 +542,7 @@ button {
 .board tbody tr {
   --i: 0;
   transition: background 0.15s;
-  animation: rowIn 0.5s cubic-bezier(0.22, 1, 0.36, 1) both;
+  animation: rowIn 0.5s var(--ease-apple) both;
   animation-delay: calc(var(--i) * 35ms);
 }
 
@@ -584,7 +556,7 @@ button {
 }
 
 .board tbody tr:hover {
-  background: var(--accent-1-soft);
+  background: var(--bg-elevated);
 }
 
 .name {
@@ -592,13 +564,13 @@ button {
 }
 
 .score {
-  font-weight: 700;
+  font-weight: 600;
   color: var(--accent-1);
 }
 
 .total {
-  font-weight: 800;
-  color: var(--accent-2-hover);
+  font-weight: 700;
+  color: var(--text-primary);
 }
 
 .rank {
@@ -606,17 +578,11 @@ button {
 }
 
 .top-1 {
-  background: var(--accent-1-soft-strong);
+  background: var(--top3-soft);
 }
 
 .top-1 .rank {
-  color: #d97706;
-  animation: rankPulse 2.2s ease-in-out infinite;
-}
-
-@keyframes rankPulse {
-  0%, 100% { text-shadow: 0 0 0 rgba(217, 119, 6, 0); }
-  50% { text-shadow: 0 0 14px rgba(217, 119, 6, 0.55); }
+  color: #b45309;
 }
 
 .top-2 {
@@ -624,7 +590,7 @@ button {
 }
 
 .top-2 .rank {
-  color: #6b7280;
+  color: var(--text-secondary);
 }
 
 .top-3 {
@@ -632,7 +598,7 @@ button {
 }
 
 .top-3 .rank {
-  color: #ea580c;
+  color: #a16207;
 }
 
 /* 挂科（无参评资格）：沉底灰显，总分 -1 */
@@ -693,18 +659,16 @@ button {
   border: 1px solid var(--border-color);
   border-radius: 16px;
   padding: 26px 28px;
-  box-shadow: 0 4px 24px var(--glow-accent);
-  animation: fadeInUp 0.35s ease both;
+  box-shadow: var(--shadow-sm);
+  animation: fadeInUp 0.35s var(--ease-apple) both;
 }
 
 .panel h2 {
   font-size: 20px;
-  font-weight: 700;
+  font-weight: 600;
+  letter-spacing: -0.01em;
   margin-bottom: 10px;
-  background: linear-gradient(135deg, var(--accent-1), var(--accent-2));
-  -webkit-background-clip: text;
-  background-clip: text;
-  -webkit-text-fill-color: transparent;
+  color: var(--text-primary);
 }
 
 .panel h3 {
@@ -794,7 +758,6 @@ button {
 
 .result-item:hover {
   border-color: var(--accent-1-border);
-  transform: translateX(2px);
 }
 
 /* ---------- AI 草稿审核 ---------- */
@@ -804,7 +767,7 @@ button {
   padding: 16px 18px;
   margin-bottom: 14px;
   background: var(--bg-elevated);
-  box-shadow: 0 4px 18px var(--glow-accent);
+  box-shadow: var(--shadow-sm);
 }
 
 .draft-head {
@@ -892,8 +855,8 @@ button {
 }
 
 .evidence-thumb:hover {
-  transform: scale(1.06);
-  box-shadow: 0 6px 20px var(--glow-accent);
+  transform: scale(1.03);
+  box-shadow: var(--shadow-md);
 }
 
 .img-preview {
@@ -955,6 +918,54 @@ button {
   border-color: var(--accent-1);
 }
 
+/* ---------- 审批列表搜索自动补全（与搜索框同规则匹配，/正则/ 也能过滤建议） ---------- */
+.award-search {
+  position: relative;
+  flex: 0 1 240px;
+  min-width: 160px;
+}
+
+.award-search .filter-input {
+  width: 100%;
+}
+
+.award-suggest {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  right: 0;
+  margin-top: 6px;
+  background: var(--bg-card);
+  border: 1px solid var(--border-color);
+  border-radius: 12px;
+  padding: 6px;
+  box-shadow: var(--shadow-lg);
+  z-index: 200;
+  max-height: 280px;
+  overflow-y: auto;
+}
+
+.award-suggest button {
+  display: block;
+  width: 100%;
+  text-align: left;
+  padding: 9px 14px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  font-size: 13px;
+  font-family: inherit;
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.award-suggest button:hover,
+.award-suggest button.picked {
+  background: var(--accent-1-soft);
+  color: var(--accent-1);
+}
+
 /* ---------- 榜单推荐条 ---------- */
 .promo-bar {
   display: flex;
@@ -964,8 +975,8 @@ button {
   flex-wrap: wrap;
   padding: 12px 18px;
   margin-bottom: 16px;
-  border: 1px solid var(--accent-1-border);
-  background: var(--accent-1-soft);
+  border: 1px solid var(--border-color);
+  background: var(--bg-elevated);
   border-radius: 12px;
   font-size: 13px;
 }
@@ -1050,7 +1061,7 @@ button {
 }
 
 .chat-msg.user .chat-bubble {
-  background: linear-gradient(135deg, var(--accent-1), var(--accent-1-light));
+  background: var(--accent-1);
   color: var(--white);
   border: none;
 }
@@ -1123,7 +1134,7 @@ button {
 }
 
 .file-chip.is-img {
-  border-color: var(--accent-2-border, var(--border-color));
+  border-color: var(--accent-1-border);
   color: var(--accent-1);
 }
 
@@ -1350,18 +1361,24 @@ button {
   padding: 8px 16px;
   min-width: 120px;
   border: 1px solid var(--border-color);
-  border-radius: 10px;
+  border-radius: 980px;
   background: var(--bg-card);
   color: var(--text-primary);
   cursor: pointer;
   height: 40px;
-  transition: all 0.2s;
+  transition: border-color 0.2s var(--ease-apple), color 0.2s var(--ease-apple),
+    background 0.2s var(--ease-apple), transform 0.15s var(--ease-apple);
   white-space: nowrap;
 }
 
 .category-btn:hover {
   border-color: var(--accent-1);
   color: var(--accent-1);
+}
+
+.category-btn:active:not(:disabled) {
+  transform: scale(0.96);
+  transition-duration: 0.08s;
 }
 
 .category-btn .arrow-down {
@@ -1387,10 +1404,10 @@ button {
   opacity: 0;
   visibility: hidden;
   transform: translateY(-8px) scale(0.96);
-  transition: opacity 0.25s cubic-bezier(0.22, 1, 0.36, 1),
-              transform 0.25s cubic-bezier(0.22, 1, 0.36, 1),
+  transition: opacity 0.25s var(--ease-apple),
+              transform 0.25s var(--ease-apple),
               visibility 0.25s;
-  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.1);
+  box-shadow: var(--shadow-lg);
   z-index: 200;
 }
 
@@ -1516,8 +1533,8 @@ button {
 .markdown-body blockquote {
   margin: 10px 0;
   padding: 6px 14px;
-  border-left: 3px solid var(--accent-1);
-  background: var(--accent-1-soft);
+  border-left: 3px solid var(--neutral-soft-hover);
+  background: var(--bg-elevated);
   border-radius: 0 8px 8px 0;
   color: var(--text-secondary);
 }
@@ -1570,16 +1587,11 @@ button {
   padding: 18px 20px;
   margin-bottom: 14px;
   background: var(--bg-card);
-  transition: border-color 0.25s, box-shadow 0.25s, transform 0.25s;
+  transition: border-color 0.25s var(--ease-apple), box-shadow 0.25s var(--ease-apple);
 }
 
 .award-card:hover {
-  border-color: var(--accent-1-border);
-  box-shadow: 0 6px 24px var(--glow-accent);
-}
-
-.award-card.pending {
-  border-left: 4px solid var(--accent-1);
+  box-shadow: var(--shadow-md);
 }
 
 .award-card.approved {
@@ -1680,8 +1692,8 @@ button {
 }
 
 .evidence-img img:hover {
-  transform: scale(1.03);
-  box-shadow: 0 6px 20px var(--glow-accent);
+  transform: scale(1.02);
+  box-shadow: var(--shadow-md);
 }
 
 .evidence-img a {
@@ -1732,8 +1744,8 @@ button {
   margin: auto;
   display: flex;
   flex-direction: column;
-  animation: scaleIn 0.22s cubic-bezier(0.22, 1, 0.36, 1);
-  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.2);
+  animation: scaleIn 0.22s var(--ease-apple);
+  box-shadow: var(--shadow-lg);
 }
 
 .modal-sheet h3 {
@@ -1777,16 +1789,21 @@ button {
   justify-content: center;
   padding: 10px;
   font-size: 14px;
-  border-radius: 8px;
+  border-radius: 980px;
   cursor: pointer;
   border: none;
-  background: linear-gradient(135deg, var(--accent-1), var(--accent-1-light));
+  background: var(--accent-1);
   color: var(--white);
-  transition: all 0.2s;
+  transition: background-color 0.2s var(--ease-apple), transform 0.15s var(--ease-apple);
 }
 
 .modal-actions .btn-primary:hover {
-  box-shadow: 0 4px 16px var(--glow-accent-strong);
+  background: var(--accent-1-hover);
+}
+
+.modal-actions .btn-primary:active:not(:disabled) {
+  transform: scale(0.96);
+  transition-duration: 0.08s;
 }
 
 @keyframes scaleIn {
@@ -1889,7 +1906,7 @@ button {
   background: var(--accent-1-soft-strong);
   color: var(--accent-1);
   transform: scale(1.01);
-  box-shadow: 0 8px 26px var(--glow-accent);
+  box-shadow: var(--shadow-md);
 }
 
 .dropzone.disabled {
@@ -2042,11 +2059,16 @@ button {
   border-radius: 8px;
   cursor: pointer;
   white-space: nowrap;
-  transition: background 0.2s, color 0.2s;
+  transition: background 0.2s var(--ease-apple), color 0.2s var(--ease-apple), transform 0.15s var(--ease-apple);
 }
 
 .theme-toggle-option:hover {
   color: var(--text-primary);
+}
+
+.theme-toggle-option:active {
+  transform: scale(0.94);
+  transition-duration: 0.08s;
 }
 
 .theme-toggle-option.active {
@@ -2425,7 +2447,7 @@ textarea.tf-input.mono {
   flex: 0 0 auto;
   border-radius: 50%;
   overflow: hidden;
-  background: linear-gradient(135deg, var(--accent-1), var(--accent-2));
+  background: var(--text-muted);
   color: var(--white);
   font-weight: 600;
   line-height: 1;
@@ -2464,12 +2486,17 @@ textarea.tf-input.mono {
   font-family: inherit;
   text-align: left;
   cursor: pointer;
-  transition: background 0.2s, color 0.2s, border-color 0.2s;
+  transition: background 0.2s var(--ease-apple), color 0.2s var(--ease-apple), border-color 0.2s var(--ease-apple), transform 0.15s var(--ease-apple);
 }
 
 .nav-item:hover {
   background: var(--accent-1-soft);
   color: var(--text-primary);
+}
+
+.nav-item:active {
+  transform: scale(0.98);
+  transition-duration: 0.08s;
 }
 
 .nav-item.active {
@@ -2601,12 +2628,18 @@ textarea.tf-input.mono {
   font-size: 13px;
   font-family: inherit;
   cursor: pointer;
-  transition: border-color 0.2s, background 0.2s, color 0.2s;
+  transition: border-color 0.2s var(--ease-apple), background 0.2s var(--ease-apple),
+    color 0.2s var(--ease-apple), transform 0.15s var(--ease-apple);
 }
 
 .bg-option:hover:not(:disabled) {
   border-color: var(--accent-1-border);
   color: var(--text-primary);
+}
+
+.bg-option:active:not(:disabled) {
+  transform: scale(0.97);
+  transition-duration: 0.08s;
 }
 
 .bg-option.active {
@@ -2679,7 +2712,7 @@ textarea.tf-input.mono {
     border: 1px solid var(--border-color);
     border-radius: 14px;
     background: var(--bg-card);
-    box-shadow: 0 2px 12px var(--glow-accent);
+    box-shadow: var(--shadow-sm);
     animation-delay: calc(var(--i) * 12ms); /* 卡片更高，逐行动画延迟收紧一点 */
   }
 
@@ -2764,9 +2797,9 @@ textarea.tf-input.mono {
     font-size: 11.5px;
   }
 
-  /* 前三名的徽章沿用渐变/描边观感 */
+  /* 前三名的徽章：榜首实色蓝，二三名淡蓝 */
   .board tr.top-1 td.rank > span {
-    background: linear-gradient(135deg, var(--accent-1), var(--accent-2));
+    background: var(--accent-1);
     color: var(--white);
   }
 
@@ -2779,5 +2812,22 @@ textarea.tf-input.mono {
   /* 挂科无资格：整卡灰显，且不参与排名高亮 */
   .board tbody tr.disq {
     opacity: 0.75;
+  }
+}
+
+/* ============================================
+   全局减少动态效果：系统开启「减弱动态效果」时压掉所有动画/过渡
+   ============================================ */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+
+  html {
+    scroll-behavior: auto;
   }
 }
