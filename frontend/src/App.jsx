@@ -46,6 +46,8 @@ import {
   finishAssess
 } from "./api.js";
 import Avatar from "./components/Avatar.jsx";
+import GlassTabs from "./components/GlassTabs.jsx";
+import StudentInput from "./components/StudentInput.jsx";
 import Modal from "./components/Modal.jsx";
 import Reveal from "./components/Reveal.jsx";
 import Dropdown from "./components/Dropdown.jsx";
@@ -1998,11 +2000,19 @@ export default function App() {
               右侧「导出 Excel」是该界面自己的操作（导出当前班级的综合测评总分），未选班级时禁用 */}
           {(token ? SCH_TABS : PUBLIC_TABS).includes(tab) && (
             <nav className="tabs">
-              {(token ? SCH_TABS : PUBLIC_TABS).map((t) => (
-                <button key={t} className={tab === t ? "tab active" : "tab"} onClick={() => switchTab(t)}>
-                  {TAB_LABELS[t]}{t === "approve" && pendingCount > 0 ? `（${pendingCount}）` : ""}
-                </button>
-              ))}
+              <GlassTabs
+                value={tab}
+                onChange={switchTab}
+                options={(token ? SCH_TABS : PUBLIC_TABS).map((t) => ({
+                  value: t,
+                  label: (
+                    <>
+                      {TAB_LABELS[t]}
+                      {t === "approve" && pendingCount > 0 ? `（${pendingCount}）` : ""}
+                    </>
+                  )
+                }))}
+              />
               <span className="tabs-fill" />
               <button
                 className="btn small tabs-action"
@@ -2014,12 +2024,6 @@ export default function App() {
               </button>
             </nav>
           )}
-
-          <datalist id="student-list">
-            {students.map((s) => (
-              <option key={`${s.class_id || ""}:${s.sid}`} value={s.sid}>{s.name}</option>
-            ))}
-          </datalist>
 
           {error && !loginOpen && <div className="error bar">{error}</div>}
 
@@ -2056,10 +2060,10 @@ export default function App() {
                   </div>
                   <form className="apply-form" onSubmit={handlePassStart}>
                     <label>学号 *</label>
-                    <TextField
-                      list="student-list"
+                    <StudentInput
                       value={passSid}
-                      onChange={(e) => setPassSid(e.target.value)}
+                      onChange={setPassSid}
+                      students={students}
                       placeholder="如 251184Y313"
                     />
                     <button type="submit" className="btn primary-btn">
@@ -2399,26 +2403,29 @@ export default function App() {
             <p className="hint">
               选择申报类型：AI 智能分类支持填学号 + 自然语言描述 + 上传奖状/证书图片或文件，AI 分析后请本人核对加分项再提交审批（支持一键提交全部）；传统表单可直接提交申报；班委加分可快速生成班级职务的德育加分申报；想要 AI 按评分办法逐项询问请使用顶部「加分一遍过」。学号输入框支持自动补全。
             </p>
-            <div className="type-tabs">
-              <button className={applyType === "ai" ? "tab active" : "tab"} onClick={() => setApplyType("ai")}>AI 智能分类</button>
-              <button className={applyType === "form" ? "tab active" : "tab"} onClick={() => setApplyType("form")}>传统表单申报</button>
-              <button className={applyType === "cc" ? "tab active" : "tab"} onClick={() => setApplyType("cc")}>班委加分</button>
-              {token && (
-                <button className={applyType === "batch" ? "tab active" : "tab"} onClick={() => setApplyType("batch")}>批量加分（管理员）</button>
-              )}
-              {token && (
-                <button className={applyType === "adjust" ? "tab active" : "tab"} onClick={() => setApplyType("adjust")}>分数调整（管理员）</button>
-              )}
-            </div>
+            <GlassTabs
+              className="type-tabs"
+              value={applyType}
+              onChange={setApplyType}
+              options={[
+                { value: "ai", label: "AI 智能分类" },
+                { value: "form", label: "传统表单申报" },
+                { value: "cc", label: "班委加分" },
+                ...(token ? [
+                  { value: "batch", label: "批量加分（管理员）" },
+                  { value: "adjust", label: "分数调整（管理员）" }
+                ] : [])
+              ]}
+            />
 
             {applyType === "ai" ? (
               <>
                 <form className="apply-form" onSubmit={handleAnalyze}>
                   <label>学号 *</label>
-                  <TextField
-                    list="student-list"
+                  <StudentInput
                     value={applySid}
-                    onChange={(e) => setApplySid(e.target.value)}
+                    onChange={setApplySid}
+                    students={students}
                     placeholder="如 251184Y313"
                   />
                   <label>情况描述</label>
@@ -2478,10 +2485,10 @@ export default function App() {
               <>
                 <form className="apply-form" onSubmit={handleManual}>
                   <label>学号 *</label>
-                  <TextField
-                    list="student-list"
+                  <StudentInput
                     value={formSid}
-                    onChange={(e) => setFormSid(e.target.value)}
+                    onChange={setFormSid}
+                    students={students}
                     placeholder="如 251184Y313"
                   />
                   <label>加分栏目 *</label>
@@ -2538,10 +2545,10 @@ export default function App() {
               <>
                 <form className="apply-form" onSubmit={handleClassCommittee}>
                   <label>学号 *</label>
-                  <TextField
-                    list="student-list"
+                  <StudentInput
                     value={ccSid}
-                    onChange={(e) => setCcSid(e.target.value)}
+                    onChange={setCcSid}
+                    students={students}
                     placeholder="如 251184Y313"
                   />
                   <label>班委职务 *</label>
@@ -3148,16 +3155,15 @@ export default function App() {
                           <em className="file-count">　必需占位符：{aiMeta.placeholders[stage].join(" ")}</em>
                         )}
                       </label>
-                      <div className="type-tabs md-toggle">
-                        <button
-                          className={promptViews[stage] !== "preview" ? "tab active" : "tab"}
-                          onClick={() => setPromptViews((v) => ({ ...v, [stage]: "edit" }))}
-                        >编辑</button>
-                        <button
-                          className={promptViews[stage] === "preview" ? "tab active" : "tab"}
-                          onClick={() => setPromptViews((v) => ({ ...v, [stage]: "preview" }))}
-                        >预览</button>
-                      </div>
+                      <GlassTabs
+                        className="type-tabs md-toggle"
+                        value={promptViews[stage] !== "preview" ? "edit" : "preview"}
+                        onChange={(v) => setPromptViews((s) => ({ ...s, [stage]: v }))}
+                        options={[
+                          { value: "edit", label: "编辑" },
+                          { value: "preview", label: "预览" }
+                        ]}
+                      />
                       {promptViews[stage] === "preview" ? (
                         <div
                           className="markdown-body"

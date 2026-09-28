@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import GlassTabs from "./GlassTabs.jsx";
 
 /**
  * 主题切换（跟随系统 / 浅色 / 深色）
@@ -77,19 +78,12 @@ export default function ThemeToggle() {
   };
 
   return (
-    <div className="theme-toggle" role="group" aria-label="主题模式">
-      {OPTIONS.map(([value, label]) => (
-        <button
-          key={value}
-          type="button"
-          className={`theme-toggle-option${mode === value ? " active" : ""}`}
-          aria-pressed={mode === value}
-          title={label}
-          onClick={() => change(value)}
-        >
-          {label}
-        </button>
-      ))}
-    </div>
+    <GlassTabs
+      className="theme-toggle"
+      ariaLabel="主题模式"
+      value={mode}
+      onChange={change}
+      options={OPTIONS.map(([value, label]) => ({ value, label, title: label }))}
+    />
   );
 }
