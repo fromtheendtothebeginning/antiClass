@@ -58,7 +58,7 @@
   --ring: 0 0 0 3px rgba(228, 184, 99, 0.4);
 
   --thumb-bg: rgba(255, 255, 255, 0.85);
-  --menu-bg: rgba(255, 255, 255, 0.92);
+  --menu-bg: rgba(255, 255, 255, 0.97);
   --glass-blur: 40px;
   --scene-wells: radial-gradient(640px circle at 85% 8%, rgba(124, 156, 196, 0.5), transparent 62%),
     radial-gradient(560px circle at 8% 92%, rgba(228, 184, 99, 0.28), transparent 60%),
@@ -115,7 +115,7 @@
     inset 0 1px 0 rgba(255, 255, 255, 0.25), inset 0 -1px 0 rgba(2, 6, 16, 0.35);
   --ring: 0 0 0 3px rgba(228, 184, 99, 0.18);
   --thumb-bg: rgba(255, 255, 255, 0.16);
-  --menu-bg: rgba(22, 32, 50, 0.88);
+  --menu-bg: rgba(17, 26, 43, 0.96);
   --glass-blur: 40px;
   --scene-wells: radial-gradient(640px circle at 85% 8%, rgba(124, 156, 196, 0.28), transparent 62%),
     radial-gradient(560px circle at 8% 92%, rgba(51, 81, 122, 0.35), transparent 60%),
@@ -169,7 +169,7 @@
       inset 0 1px 0 rgba(255, 255, 255, 0.25), inset 0 -1px 0 rgba(2, 6, 16, 0.35);
     --ring: 0 0 0 3px rgba(228, 184, 99, 0.18);
     --thumb-bg: rgba(255, 255, 255, 0.16);
-    --menu-bg: rgba(22, 32, 50, 0.88);
+    --menu-bg: rgba(17, 26, 43, 0.96);
     --glass-blur: 40px;
     --scene-wells: radial-gradient(640px circle at 85% 8%, rgba(124, 156, 196, 0.28), transparent 62%),
       radial-gradient(560px circle at 8% 92%, rgba(51, 81, 122, 0.35), transparent 60%),
@@ -2495,7 +2495,7 @@ textarea.tf-input {
 input.tf-input:focus,
 textarea.tf-input:focus {
   border-color: var(--border-strong);
-  background: var(--neutral-soft);
+  background: var(--neutral-soft-hover);
   box-shadow: var(--ring);
 }
 
@@ -2983,17 +2983,159 @@ textarea.tf-input.mono {
 }
 
 /* ============================================
-   下拉/选择器加强：白 8% 玻璃底在面板上太淡（用户反馈 2026-09-28），
-   统一提到 --neutral-soft-hover + 强边框，保证「要选的东西」一眼可见
+   表单控件统一（2026-09-28，用户反馈加分申报里控件风格不一）：
+   全站所有输入/下拉（TextField 的 .tf-input、原生 input/select/textarea、行内小编辑框）
+   一律同一配方 —— --neutral-soft-hover 底 + --border-strong 边 + 12px 圆角 + 香槟 --ring 聚焦，
+   写在文件末尾以同特异性压过各处旧规则。别再给单个控件单独调底色/边框。
    ============================================ */
 .category-btn,
-.apply-form select,
+.filter-input,
+.edit-input,
 .class-bar select,
+.apply-form input:not([type='file']):not(.tf-input),
+.apply-form select,
+.apply-form textarea:not(.tf-input),
 .award-field select,
+.award-field input,
 .draft-item select,
-.assess-item-card select {
+.draft-item input,
+.assess-item-card select,
+.assess-item-card input,
+input.tf-input,
+textarea.tf-input {
   background: var(--neutral-soft-hover);
   border-color: var(--border-strong);
+  border-radius: 12px;
+}
+
+/* ============================================
+   玻璃下拉选择（components/GlassSelect.jsx）：自绘菜单替代原生 <select>
+   触发器 = 表单控件统一配方；展开菜单 = --menu-bg 实底玻璃（与建议框同款）。
+   紧凑行（草稿卡/一遍过编辑卡/审批卡字段）用局部覆盖保持原高度与定宽。
+   ============================================ */
+.glass-select {
+  position: relative;
+  width: 100%;
+  min-width: 0;
+}
+
+.select-trigger {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  width: 100%;
+  min-height: 40px;
+  padding: 8px 12px;
+  font-size: 14px;
+  font-family: inherit;
+  text-align: left;
+  color: var(--text-primary);
+  cursor: pointer;
+  background: var(--neutral-soft-hover);
+  border: 1px solid var(--border-strong);
+  border-radius: 12px;
+  transition: border-color 0.5s var(--ease-spring), background-color 0.5s var(--ease-spring),
+    box-shadow 0.5s var(--ease-spring);
+}
+
+.select-trigger:hover:not(:disabled) {
+  border-color: var(--accent-1-border);
+}
+
+.select-trigger:focus-visible {
+  outline: none;
+  box-shadow: var(--ring);
+}
+
+.select-trigger:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.select-value {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.select-trigger .arrow-down {
+  flex: 0 0 auto;
+  font-size: 10px;
+  color: var(--text-muted);
+  transition: transform 0.5s var(--ease-spring);
+}
+
+.select-trigger.open .arrow-down {
+  transform: rotate(180deg);
+}
+
+.select-menu {
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 0;
+  min-width: 100%;
+  max-height: 280px;
+  overflow-y: auto;
+  padding: 6px;
+  background: var(--menu-bg);
+  border: 1px solid var(--border-color);
+  border-radius: 16px;
+  box-shadow: var(--shadow-lg);
+  backdrop-filter: blur(var(--glass-blur)) saturate(180%);
+  -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(180%);
+  z-index: 300;
+}
+
+.select-option {
+  display: block;
+  width: 100%;
+  text-align: left;
+  padding: 9px 14px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  font-size: 13px;
+  font-family: inherit;
+  color: var(--text-secondary);
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background 0.3s var(--ease-spring), color 0.3s var(--ease-spring);
+}
+
+.select-option:hover {
+  background: var(--accent-1-soft);
+  color: var(--text-primary);
+}
+
+/* 当前选中项：香槟金（关键选择的唯一强调色用法） */
+.select-option.picked {
+  color: var(--accent-2);
+  font-weight: 600;
+}
+
+.select-option.is-disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+/* 紧凑行适配：草稿卡（96px 栏目）、一遍过编辑卡（92px）、审批卡字段（原紧凑高度） */
+.draft-item .glass-select {
+  flex: 0 0 96px;
+  width: 96px;
+}
+
+.assess-item-card .glass-select {
+  flex: 0 0 92px;
+  width: 92px;
+}
+
+.draft-item .select-trigger,
+.assess-item-card .select-trigger,
+.award-field .select-trigger {
+  min-height: 34px;
+  padding: 5px 10px;
+  font-size: 13px;
 }
 
 /* ============================================

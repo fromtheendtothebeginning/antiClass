@@ -47,6 +47,7 @@ import {
 } from "./api.js";
 import Avatar from "./components/Avatar.jsx";
 import GlassTabs from "./components/GlassTabs.jsx";
+import GlassSelect from "./components/GlassSelect.jsx";
 import StudentInput from "./components/StudentInput.jsx";
 import Modal from "./components/Modal.jsx";
 import Reveal from "./components/Reveal.jsx";
@@ -107,6 +108,19 @@ const CC_ROLES = [
   { role: "副班长、学习委员", points: 4 },
   { role: "班级其他学干", points: 2 }
 ];
+const CATEGORY_OPTIONS = CATEGORIES.map((c) => ({ value: c, label: c }));
+const CC_ROLE_OPTIONS = CC_ROLES.map((r) => ({ value: r.role, label: `${r.role}（+${r.points}）` }));
+const ADJ_FIELD_OPTIONS = [
+  { value: "deyu", label: "德育" },
+  { value: "meiyu", label: "美育" },
+  { value: "laoyu", label: "劳育" },
+  { value: "fujia", label: "附加分" }
+];
+const ADJ_OP_OPTIONS = [
+  { value: "add", label: "增加" },
+  { value: "sub", label: "减少" },
+  { value: "set", label: "设为" }
+];
 const IMG_EXT = [".jpg", ".jpeg", ".png", ".gif", ".webp", ".bmp"];
 const STAGE_LABELS = {
   stage0: "阶段0 · 提示词优化与下位赛核实",
@@ -136,11 +150,11 @@ function rebuildPassItems(serverItems, localItems) {
 function ManualItemForm({ value, onChange, onSubmit }) {
   return (
     <form className="assess-item-card" onSubmit={onSubmit}>
-      <select value={value.category} onChange={(e) => onChange({ ...value, category: e.target.value })}>
-        {CATEGORIES.map((c) => (
-          <option key={c} value={c}>{c}</option>
-        ))}
-      </select>
+      <GlassSelect
+        value={value.category}
+        onChange={(v) => onChange({ ...value, category: v })}
+        options={CATEGORY_OPTIONS}
+      />
       <input
         type="number" step="0.5" min="0"
         max={value.category === "附加分" ? 5 : 100}
@@ -255,11 +269,12 @@ function AwardCard({ award, token, onRefresh, onPreview }) {
           <div className="award-body">
             <div className="award-field">
               <span>加分栏目</span>
-              <select value={category} onChange={(e) => setCategory(e.target.value)} disabled={!canEdit || award.approved !== "否"}>
-                {CATEGORIES.map((c) => (
-                  <option key={c} value={c}>{c}</option>
-                ))}
-              </select>
+              <GlassSelect
+                value={category}
+                onChange={setCategory}
+                disabled={!canEdit || award.approved !== "否"}
+                options={CATEGORY_OPTIONS}
+              />
             </div>
             <div className="award-field">
               <span>加分分值</span>
@@ -361,11 +376,7 @@ function AwardCard({ award, token, onRefresh, onPreview }) {
         </p>
         <div className="award-field">
           <span>加分栏目</span>
-          <select value={category} onChange={(e) => setCategory(e.target.value)}>
-            {CATEGORIES.map((c) => (
-              <option key={c} value={c}>{c}</option>
-            ))}
-          </select>
+          <GlassSelect value={category} onChange={setCategory} options={CATEGORY_OPTIONS} />
         </div>
         <div className="award-field">
           <span>加分分值</span>
@@ -445,11 +456,11 @@ function DraftCard({ draft, submitting, onChangeItem, onRemoveItem, onSubmit, on
       <p className="hint">请本人核对以下加分项的栏目、分值与依据，可修改、删除单条后提交。</p>
       {draft.items.map((it, idx) => (
         <div key={idx} className="result-item draft-item">
-          <select value={it.category} onChange={(e) => onChangeItem(draft.draft_id, idx, { category: e.target.value })}>
-            {CATEGORIES.map((c) => (
-              <option key={c} value={c}>{c}</option>
-            ))}
-          </select>
+          <GlassSelect
+            value={it.category}
+            onChange={(v) => onChangeItem(draft.draft_id, idx, { category: v })}
+            options={CATEGORY_OPTIONS}
+          />
           <input
             type="number"
             step="0.5"
@@ -2219,14 +2230,11 @@ export default function App() {
                       )}
                       {passItems.map((it, idx) => (
                         <div key={idx} className="assess-item-card">
-                          <select
+                          <GlassSelect
                             value={it.category}
-                            onChange={(e) => updatePassItem(idx, { category: e.target.value })}
-                          >
-                            {CATEGORIES.map((c) => (
-                              <option key={c} value={c}>{c}</option>
-                            ))}
-                          </select>
+                            onChange={(v) => updatePassItem(idx, { category: v })}
+                            options={CATEGORY_OPTIONS}
+                          />
                           <input
                             type="number" step="0.5" min="0"
                             max={it.category === "附加分" ? 5 : 100}
@@ -2492,11 +2500,7 @@ export default function App() {
                     placeholder="如 251184Y313"
                   />
                   <label>加分栏目 *</label>
-                  <select value={formCategory} onChange={(e) => setFormCategory(e.target.value)}>
-                    {CATEGORIES.map((c) => (
-                      <option key={c} value={c}>{c}</option>
-                    ))}
-                  </select>
+                  <GlassSelect value={formCategory} onChange={setFormCategory} options={CATEGORY_OPTIONS} />
                   <label>申报分值 *</label>
                   <input
                     type="number"
@@ -2552,11 +2556,7 @@ export default function App() {
                     placeholder="如 251184Y313"
                   />
                   <label>班委职务 *</label>
-                  <select value={ccRole} onChange={(e) => setCcRole(e.target.value)}>
-                    {CC_ROLES.map((r) => (
-                      <option key={r.role} value={r.role}>{r.role}（+{r.points}）</option>
-                    ))}
-                  </select>
+                  <GlassSelect value={ccRole} onChange={setCcRole} options={CC_ROLE_OPTIONS} />
                   <p className="hint">任职满六个月；班委加分计入德育板块。</p>
                   <button type="submit" className="btn primary-btn" disabled={ccBusy}>
                     {ccBusy ? <><span className="spin" /> 提交中…</> : "提交班委加分"}
@@ -2587,18 +2587,9 @@ export default function App() {
                     placeholder="251184Y330, 251184Y3[12]"
                   />
                   <label>分数项 *</label>
-                  <select value={adjField} onChange={(e) => setAdjField(e.target.value)}>
-                    <option value="deyu">德育</option>
-                    <option value="meiyu">美育</option>
-                    <option value="laoyu">劳育</option>
-                    <option value="fujia">附加分</option>
-                  </select>
+                  <GlassSelect value={adjField} onChange={setAdjField} options={ADJ_FIELD_OPTIONS} />
                   <label>操作 *</label>
-                  <select value={adjOp} onChange={(e) => setAdjOp(e.target.value)}>
-                    <option value="add">增加</option>
-                    <option value="sub">减少</option>
-                    <option value="set">设为</option>
-                  </select>
+                  <GlassSelect value={adjOp} onChange={setAdjOp} options={ADJ_OP_OPTIONS} />
                   <label>数值 *</label>
                   <input
                     type="number"
@@ -2637,11 +2628,7 @@ export default function App() {
                     placeholder="251184Y313,251184Y325,251184Y331"
                   />
                   <label>加分栏目 *</label>
-                  <select value={batchCategory} onChange={(e) => setBatchCategory(e.target.value)}>
-                    {CATEGORIES.map((c) => (
-                      <option key={c} value={c}>{c}</option>
-                    ))}
-                  </select>
+                  <GlassSelect value={batchCategory} onChange={setBatchCategory} options={CATEGORY_OPTIONS} />
                   <label>加分分值 *</label>
                   <input
                     type="number"
@@ -3008,12 +2995,14 @@ export default function App() {
             {landingMsg && <div className={`ai-msg ${landingMsg.type}`}>{landingMsg.text}</div>}
             <div className="apply-form">
               <label>访客开始界面</label>
-              <select value={landingPick} onChange={(e) => { setLandingPick(e.target.value); setLandingMsg(null); }}>
-                <option value="">什么都不选（默认，只显示侧边栏）</option>
-                {PUBLIC_TABS.map((t) => (
-                  <option key={t} value={t}>{TAB_LABELS[t]}</option>
-                ))}
-              </select>
+              <GlassSelect
+                value={landingPick}
+                onChange={(v) => { setLandingPick(v); setLandingMsg(null); }}
+                options={[
+                  { value: "", label: "什么都不选（默认，只显示侧边栏）" },
+                  ...PUBLIC_TABS.map((t) => ({ value: t, label: TAB_LABELS[t] }))
+                ]}
+              />
               <div className="ai-actions">
                 <button
                   type="button"
@@ -3076,11 +3065,11 @@ export default function App() {
                   <h3>连接</h3>
                   <form className="apply-form" onSubmit={handleAiSave}>
                     <label>提供商</label>
-                    <select value={aiForm.provider} onChange={(e) => pickProvider(e.target.value)}>
-                      {aiMeta.providers.map((p) => (
-                        <option key={p.id} value={p.id}>{p.label}</option>
-                      ))}
-                    </select>
+                    <GlassSelect
+                      value={aiForm.provider}
+                      onChange={pickProvider}
+                      options={aiMeta.providers.map((p) => ({ value: p.id, label: p.label }))}
+                    />
                     <label>Base URL *</label>
                     <TextField
                       value={aiForm.base_url}
@@ -3113,11 +3102,11 @@ export default function App() {
                       </span>
                     )}
                     <label>联网搜索源</label>
-                    <select value={aiForm.searchProvider} onChange={(e) => setAiForm({ ...aiForm, searchProvider: e.target.value })}>
-                      {aiMeta.search_providers.map((s) => (
-                        <option key={s} value={s}>{s}</option>
-                      ))}
-                    </select>
+                    <GlassSelect
+                      value={aiForm.searchProvider}
+                      onChange={(v) => setAiForm({ ...aiForm, searchProvider: v })}
+                      options={aiMeta.search_providers.map((s) => ({ value: s, label: s }))}
+                    />
                     {aiForm.searchProvider === "tavily" && (
                       <>
                         <label>Tavily API Key{aiMeta.config.search.has_key ? `（已保存 ${aiMeta.config.search.api_key_masked}，留空保持不变）` : ""}</label>
