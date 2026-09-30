@@ -24,7 +24,6 @@ DEFAULT_XLSX = BASE_DIR.parent / "Y3第二学期成绩导出.xlsx"
 LEGACY_AI_CONFIG = BASE_DIR / "ai_config.json"
 LEGACY_AI_PROMPTS = BASE_DIR / "ai_prompts.json"
 
-ADMIN_USER = "admin"  # 历史遗留常量（现按 role 判权限），保留占位
 ADMIN_PASSWORD = os.environ.get("ADMIN_PASSWORD", "admin123")
 ROOT_PASSWORD = os.environ.get("ROOT_PASSWORD", "root123")
 

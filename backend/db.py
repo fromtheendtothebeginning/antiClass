@@ -5,9 +5,10 @@ import hmac
 import json
 import os
 import secrets
+import time
 import uuid
 from contextlib import contextmanager
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from decimal import Decimal
 from pathlib import Path
 
@@ -123,6 +124,17 @@ CREATE TABLE IF NOT EXISTS drafts (
     items JSON NOT NULL,
     evidence JSON NOT NULL,
     created_at DATETIME NOT NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+CREATE TABLE IF NOT EXISTS assess_sessions (
+    id CHAR(32) PRIMARY KEY,
+    sid VARCHAR(32) NOT NULL,
+    name VARCHAR(64) NOT NULL DEFAULT '',
+    class_id CHAR(32) NOT NULL DEFAULT '',
+    folder VARCHAR(64) NOT NULL DEFAULT '',
+    state JSON NOT NULL,
+    created_at DATETIME NOT NULL,
+    updated_at DATETIME NOT NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 """
 
@@ -392,6 +404,75 @@ def evict_drafts_beyond(cap):
         for d in rows:
             cur.execute("DELETE FROM drafts WHERE id=%s", (d["id"],))
     return rows
+
+
+# ---------- assess_sessions（加分一遍过会话持久化；busy 为进程内易失态不入库） ----------
+
+def assess_upsert(sess):
+    state = {
+        "messages": sess.get("messages", []),
+        "items": sess.get("items", []),
+        "existing": sess.get("existing", []),
+        "done": bool(sess.get("done")),
+        "ended": bool(sess.get("ended")),
+        "turns": sess.get("turns", []),
+    }
+    with tx() as cur:
+        cur.execute(
+            "INSERT INTO assess_sessions (id,sid,name,class_id,folder,state,created_at,updated_at) "
+            "VALUES (%s,%s,%s,%s,%s,%s,%s,%s) "
+            "ON DUPLICATE KEY UPDATE sid=VALUES(sid), name=VALUES(name), class_id=VALUES(class_id), "
+            "folder=VALUES(folder), state=VALUES(state), updated_at=VALUES(updated_at)",
+            (
+                sess["id"], sess["sid"], sess.get("name", ""), sess.get("class_id", ""), sess.get("folder", ""),
+                json.dumps(state, ensure_ascii=False),
+                datetime.fromtimestamp(sess.get("created", time.time())),
+                datetime.fromtimestamp(sess.get("updated", time.time())),
+            ),
+        )
+
+
+def assess_get_row(session_id):
+    with tx() as cur:
+        cur.execute("SELECT * FROM assess_sessions WHERE id=%s", (session_id,))
+        row = cur.fetchone()
+    if not row:
+        return None
+    try:
+        state = json.loads(row["state"])
+    except (json.JSONDecodeError, TypeError):
+        state = {}
+    row["state"] = state if isinstance(state, dict) else {}
+    return row
+
+
+def assess_delete(session_id):
+    with tx() as cur:
+        cur.execute("DELETE FROM assess_sessions WHERE id=%s", (session_id,))
+
+
+def assess_delete_stale(ttl_seconds):
+    """删除 updated_at 早于 TTL 的会话行，返回删除数量。"""
+    with tx() as cur:
+        cur.execute(
+            "DELETE FROM assess_sessions WHERE updated_at < %s",
+            (datetime.now() - timedelta(seconds=ttl_seconds),),
+        )
+        return cur.rowcount
+
+
+def assess_evict_beyond(limit):
+    """活跃会话超过 limit 时按 updated_at 淘汰最旧的，返回被淘汰的会话 id 列表。"""
+    with tx() as cur:
+        cur.execute("SELECT COUNT(*) AS n FROM assess_sessions")
+        extra = int(cur.fetchone()["n"]) - limit
+        if extra <= 0:
+            return []
+        cur.execute("SELECT id FROM assess_sessions ORDER BY updated_at ASC LIMIT %s", (extra,))
+        ids = [r["id"] for r in cur.fetchall()]
+        for i in ids:
+            cur.execute("DELETE FROM assess_sessions WHERE id=%s", (i,))
+    return ids
 
 
 # ---------- adjust_log ----------

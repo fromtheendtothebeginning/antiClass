@@ -1,5 +1,7 @@
 # assess.py — 「加分一遍过」对话会话：AI 依据评分办法逐项提问，学生逐项回答，流式输出。
-# 会话存内存（与 DRAFTS 一致，重启即失）；加分项由 AI 在每轮回复尾行的 ==JSON== 段上报。
+# 会话内存缓存 + MySQL assess_sessions 表持久化（2026-09-30 起，重启后按需恢复，不再"重启即失"）；
+# 在 start/end_turn/finish/rewind 四个变更屏障点写库，busy 为进程内易失态不入库（重启即 0）。
+# 加分项由 AI 在每轮回复尾行的 ==JSON== 段上报。
 
 import json
 import re
@@ -116,9 +118,60 @@ def _gc():
         _SESSIONS.pop(sid, None)
 
 
+def _persist_locked(s):
+    """（内部，调用方须持 _LOCK）把会话状态写入 MySQL。失败不阻塞对话（内存态仍可用，
+    下个屏障点再同步），退化为与旧版纯内存一致。"""
+    try:
+        db.assess_upsert(s)
+    except Exception:
+        pass
+
+
+def _gc_db_locked():
+    """（内部，调用方须持 _LOCK）清理库中过期会话并按上限裁剪，把被裁 id 从内存一并移除。"""
+    try:
+        db.assess_delete_stale(SESSION_TTL)
+        evicted = db.assess_evict_beyond(SESSION_LIMIT)
+    except Exception:
+        return
+    for i in evicted:
+        _SESSIONS.pop(i, None)
+
+
+def _load_locked(session_id):
+    """（内部，调用方须持 _LOCK）从 MySQL 恢复会话（重启后首次访问按需加载）。
+    不存在或已过 TTL 返回 None；busy 是进程内易失态，恢复时归零。"""
+    try:
+        row = db.assess_get_row(session_id)
+    except Exception:
+        return None
+    if not row:
+        return None
+    if time.time() - row["updated_at"].timestamp() > SESSION_TTL:
+        return None  # 已过期：视为不存在，行由下次 _gc_db_locked 清掉
+    state = row["state"]
+    return {
+        "id": row["id"],
+        "sid": row["sid"],
+        "name": row["name"],
+        "class_id": row["class_id"],
+        "folder": row.get("folder") or "",
+        "created": row["created_at"].timestamp(),
+        "updated": time.time(),
+        "messages": state.get("messages", []),
+        "items": state.get("items", []),
+        "existing": state.get("existing", []),
+        "done": bool(state.get("done")),
+        "ended": bool(state.get("ended")),
+        "turns": state.get("turns", []),
+        "busy": 0,
+    }
+
+
 def start(sid, name, class_id):
     with _LOCK:
         _gc()
+        _gc_db_locked()
         if len(_SESSIONS) >= SESSION_LIMIT:
             # 挤掉最旧会话
             oldest = min(_SESSIONS, key=lambda k: _SESSIONS[k]["updated"])
@@ -152,9 +205,10 @@ def start(sid, name, class_id):
             "done": False,
             "ended": False,
             "turns": [],  # 每轮结束打一个切片标记 {"msgs","items","done"}，供 rewind 按轮回滚
-            "busy": 0,  # 进行中的轮次数（>0 时拒绝回滚）
+            "busy": 0,  # 进行中的轮次数（>0 时拒绝回滚；进程内易失态，不入库）
         }
         _SESSIONS[sess["id"]] = sess
+        _persist_locked(sess)
         return dict(sess)
 
 
@@ -162,7 +216,10 @@ def get(session_id):
     with _LOCK:
         s = _SESSIONS.get(session_id)
         if not s:
-            return None
+            s = _load_locked(session_id)  # 重启后首次访问：从库恢复
+            if not s:
+                return None
+            _SESSIONS[session_id] = s
         s["updated"] = time.time()
         return s
 
@@ -181,12 +238,17 @@ def finish(session_id):
         s["done"] = True
         s["ended"] = True
         s["updated"] = time.time()
+        _persist_locked(s)
         return dict(s)
 
 
 def drop(session_id):
     with _LOCK:
         _SESSIONS.pop(session_id, None)
+        try:
+            db.assess_delete(session_id)
+        except Exception:
+            pass
 
 
 def _mark_locked(s):
@@ -206,17 +268,20 @@ def _mark_locked(s):
 
 
 def begin_turn(session_id):
-    """一轮开始：busy+1（回滚端点据此拒绝并发的 rewind）。会话已不存在则静默返回。"""
+    """一轮开始：busy+1（回滚端点据此拒绝并发的 rewind）。会话不在内存时先尝试从库恢复，
+    仍不存在则静默返回。"""
     with _LOCK:
-        s = _SESSIONS.get(session_id)
+        s = _SESSIONS.get(session_id) or _load_locked(session_id)
         if s:
+            _SESSIONS[session_id] = s
             s["busy"] = int(s.get("busy", 0)) + 1
 
 
 def end_turn(session_id, mark=True):
     """一轮结束：busy-1 并按需打切片标记（找不到会话静默返回，可能已被 GC/submit 清掉）。
     调用方用 try/finally 保证流报错/客户端断开时也会执行。
-    mark 必须放在「流式 + 智能分类」全部写完之后，否则会漏记分类那批加分项。"""
+    mark 必须放在「流式 + 智能分类」全部写完之后，否则会漏记分类那批加分项。
+    这是会话持久化的主同步点：本轮全部落盘（重启后从这恢复）。"""
     with _LOCK:
         s = _SESSIONS.get(session_id)
         if not s:
@@ -224,6 +289,7 @@ def end_turn(session_id, mark=True):
         s["busy"] = max(0, int(s.get("busy", 0)) - 1)
         if mark:
             _mark_locked(s)
+        _persist_locked(s)
 
 
 def rewind(session_id, keep_users):
@@ -251,6 +317,7 @@ def rewind(session_id, keep_users):
         s["turns"] = turns[:keep_turns]
         s["ended"] = False  # 撤回了就能继续对话（finish 会同时置 done+ended）
         s["updated"] = time.time()  # 与 touch_updated 等价；持锁中不能调会再加锁的函数
+        _persist_locked(s)
         return {
             "ok": True,
             "kept_turns": keep_turns,

@@ -42,12 +42,6 @@ class RejectBody(BaseModel):
     reason: str = ""
 
 
-class EditAwardBody(BaseModel):
-    category: str
-    points: float = 0
-    basis: str = ""
-
-
 class DraftItemBody(BaseModel):
     category: str
     points: float = 0
