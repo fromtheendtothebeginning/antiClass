@@ -1,5 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 
+const clamp = (v, lo, hi) => Math.min(Math.max(v, lo), hi);
+
 /** 量取容器内 [data-active="1"] 子元素相对容器的位置（含 flex 换行后的 offsetTop） */
 function useActiveRect(ref, dep) {
   const [rect, setRect] = useState(null);
@@ -29,19 +31,96 @@ function useActiveRect(ref, dep) {
 /**
  * 液态玻璃分段切换：玻璃轨道上一块滑块跟着选中项滑动（spring 惯性回弹），
  * 滑块本体在每次移动时轻微拉伸再回弹（液态感）。选项文字/节点由 options.label 给出。
+ * 支持按住横向拖动：滑块实时跟手（无过渡），松手落入指下选项并回弹落位。
+ * 位移超 5px 才算拖动（原地松手仍是普通点击），touch-action: pan-y 不抢纵向滚动。
  */
 export default function GlassTabs({ className = "", value, onChange, options, ariaLabel }) {
   const ref = useRef(null);
   const rect = useActiveRect(ref, value);
+  const dragRef = useRef(null);
+  const [drag, setDrag] = useState(null);
+
+  const onPointerDown = (e) => {
+    if (e.pointerType === "mouse" && e.button !== 0) return;
+    const el = ref.current;
+    if (!el || !rect || dragRef.current) return;
+    const cRect = el.getBoundingClientRect();
+    const buttons = [...el.querySelectorAll(".gtab")];
+    dragRef.current = {
+      id: e.pointerId,
+      startX: e.clientX,
+      startY: e.clientY,
+      startLeft: rect.left,
+      startTop: rect.top,
+      thumbW: rect.width,
+      thumbH: rect.height,
+      target: value,
+      items: buttons.map((b, i) => {
+        const r = b.getBoundingClientRect();
+        return {
+          value: options[i]?.value,
+          left: r.left - cRect.left,
+          top: r.top - cRect.top,
+          width: r.width,
+          height: r.height
+        };
+      })
+    };
+  };
+
+  const onPointerMove = (e) => {
+    const d = dragRef.current;
+    const el = ref.current;
+    if (!d || !el || e.pointerId !== d.id) return;
+    if (!d.moved) {
+      if (Math.abs(e.clientX - d.startX) < 5) return; // 纵向微动不算拖动，滚动留给页面
+      d.moved = true;
+      try {
+        el.setPointerCapture(d.id); // 移出轨道也继续跟手，且松手不会误触按钮 click
+      } catch {
+        /* 指针已释放 */
+      }
+    }
+    const right = Math.max(...d.items.map((it) => it.left + it.width));
+    const left = clamp(d.startLeft + (e.clientX - d.startX), d.items[0].left, right - d.thumbW);
+    const cRect = el.getBoundingClientRect();
+    const x = e.clientX - cRect.left;
+    const y = e.clientY - cRect.top;
+    const hit = d.items.find(
+      (it) => x >= it.left && x <= it.left + it.width && y >= it.top && y <= it.top + it.height
+    );
+    if (hit) d.target = hit.value;
+    setDrag({ left, top: d.startTop, width: d.thumbW, height: d.thumbH, target: d.target });
+  };
+
+  const onPointerEnd = (e, commit) => {
+    const d = dragRef.current;
+    if (!d || e.pointerId !== d.id) return;
+    dragRef.current = null;
+    if (!d.moved) return; // 原地松手 = 普通点击，交给按钮自己的 onClick
+    setDrag(null); // 恢复过渡，滑块 spring 回弹到落位选项
+    if (commit && d.target && d.target !== value) onChange(d.target);
+  };
+
+  const thumb = drag || rect;
   return (
-    <div className={`glass-tabs${className ? ` ${className}` : ""}`} ref={ref} role="group" aria-label={ariaLabel}>
+    <div
+      className={`glass-tabs${drag ? " dragging" : ""}${className ? ` ${className}` : ""}`}
+      ref={ref}
+      role="group"
+      aria-label={ariaLabel}
+      onPointerDown={onPointerDown}
+      onPointerMove={onPointerMove}
+      onPointerUp={(e) => onPointerEnd(e, true)}
+      onPointerCancel={(e) => onPointerEnd(e, false)}
+    >
       <span
-        className={`slide-thumb${rect ? " on" : ""}`}
-        style={rect ? { transform: `translate(${rect.left}px, ${rect.top}px)`, width: rect.width, height: rect.height } : undefined}
+        className={`slide-thumb${thumb ? " on" : ""}`}
+        style={thumb ? { transform: `translate(${thumb.left}px, ${thumb.top}px)`, width: thumb.width, height: thumb.height } : undefined}
         aria-hidden="true"
       >
-        {/* key 变化 = 重新播放拉伸动画；位移动画由外层 transform 过渡承担，互不打架 */}
-        <span className="slide-thumb-goo" key={rect ? `${rect.left}:${rect.top}:${rect.width}` : "init"} />
+        {/* key 变化 = 重新播放拉伸动画；位移动画由外层 transform 过渡承担，互不打架。拖动中 key 固定，避免每帧重播 */}
+        <span className="slide-thumb-goo" key={drag ? "drag" : rect ? `${rect.left}:${rect.top}:${rect.width}` : "init"} />
       </span>
       {options.map((o) => (
         <button
@@ -50,7 +129,7 @@ export default function GlassTabs({ className = "", value, onChange, options, ar
           aria-selected={value === o.value}
           data-active={value === o.value ? "1" : undefined}
           title={o.title}
-          className={`gtab${value === o.value ? " active" : ""}`}
+          className={`gtab${value === o.value ? " active" : ""}${drag && drag.target === o.value && o.value !== value ? " drag-target" : ""}`}
           onClick={() => onChange(o.value)}
         >
           {o.label}

@@ -554,6 +554,10 @@ button {
   box-shadow: var(--shadow-sm);
   backdrop-filter: blur(var(--glass-blur)) saturate(180%);
   -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(180%);
+  /* 横向拖动换挡归轨道，纵向滚动仍留给页面 */
+  touch-action: pan-y;
+  user-select: none;
+  -webkit-user-select: none;
 }
 
 .gtab {
@@ -591,6 +595,11 @@ button {
   font-weight: 600;
 }
 
+/* 拖动中指下的选项先亮起来（松手才真正切换） */
+.gtab.drag-target {
+  color: var(--text-primary);
+}
+
 /* 滑块：位移/尺寸走 spring（轻微过冲 = 惯性）；opacity 延迟一拍，避免初次挂载从 (0,0) 飞过来 */
 .slide-thumb {
   position: absolute;
@@ -606,6 +615,15 @@ button {
 
 .slide-thumb.on {
   opacity: 1;
+}
+
+/* 拖动中：滑块去掉过渡直接跟手；被按住的按钮取消按压缩放（否则起点按钮全程缩着） */
+.glass-tabs.dragging .slide-thumb {
+  transition: none;
+}
+
+.glass-tabs.dragging .gtab:active {
+  transform: none;
 }
 
 /* 滑块玻璃本体：每次滑动重新播放一次拉伸回弹动画（液态感） */
