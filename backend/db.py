@@ -113,6 +113,17 @@ CREATE TABLE IF NOT EXISTS admins (
     avatar MEDIUMTEXT,
     created_at DATETIME NOT NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+CREATE TABLE IF NOT EXISTS drafts (
+    id CHAR(32) PRIMARY KEY,
+    sid VARCHAR(32) NOT NULL,
+    name VARCHAR(64) NOT NULL DEFAULT '',
+    class_id CHAR(32) NOT NULL DEFAULT '',
+    folder VARCHAR(64) NOT NULL DEFAULT '',
+    items JSON NOT NULL,
+    evidence JSON NOT NULL,
+    created_at DATETIME NOT NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 """
 
 
@@ -324,6 +335,63 @@ def folder_in_use(folder):
     with tx() as cur:
         cur.execute("SELECT COUNT(*) AS n FROM awards WHERE folder=%s", (folder,))
         return cur.fetchone()["n"] > 0
+
+
+# ---------- drafts（AI 分析草稿，提交/删除即清理；24h 过期） ----------
+
+def _row_draft(row):
+    row = {k: _plain(row[k]) for k in ("id", "sid", "name", "class_id", "folder", "items", "evidence", "created_at")}
+    for k in ("items", "evidence"):
+        if isinstance(row[k], str):
+            try:
+                row[k] = json.loads(row[k])
+            except (json.JSONDecodeError, TypeError):
+                row[k] = []
+    return row
+
+
+def insert_draft(draft):
+    with tx() as cur:
+        cur.execute(
+            "INSERT INTO drafts (id,sid,name,class_id,folder,items,evidence,created_at) VALUES (%s,%s,%s,%s,%s,%s,%s,%s)",
+            (
+                draft["id"], draft["sid"], draft["name"], draft.get("class_id", ""), draft.get("folder", ""),
+                json.dumps(draft["items"], ensure_ascii=False), json.dumps(draft["evidence"], ensure_ascii=False),
+                draft.get("created_at", datetime.now()),
+            ),
+        )
+
+
+def get_draft(draft_id):
+    with tx() as cur:
+        cur.execute("SELECT * FROM drafts WHERE id=%s", (draft_id,))
+        row = cur.fetchone()
+    return _row_draft(row) if row else None
+
+
+def delete_draft(draft_id):
+    with tx() as cur:
+        cur.execute("DELETE FROM drafts WHERE id=%s", (draft_id,))
+
+
+def list_drafts_before(cutoff):
+    with tx() as cur:
+        cur.execute("SELECT * FROM drafts WHERE created_at < %s", (cutoff,))
+        return [_row_draft(r) for r in cur.fetchall()]
+
+
+def evict_drafts_beyond(cap):
+    """超过 cap 个草稿时按 created_at 淘汰最旧的，返回被淘汰的草稿（调用方负责清理其证据目录）。"""
+    with tx() as cur:
+        cur.execute("SELECT COUNT(*) AS n FROM drafts")
+        extra = int(cur.fetchone()["n"]) - cap
+        if extra <= 0:
+            return []
+        cur.execute("SELECT * FROM drafts ORDER BY created_at ASC, id ASC LIMIT %s", (extra,))
+        rows = [_row_draft(r) for r in cur.fetchall()]
+        for d in rows:
+            cur.execute("DELETE FROM drafts WHERE id=%s", (d["id"],))
+    return rows
 
 
 # ---------- adjust_log ----------
