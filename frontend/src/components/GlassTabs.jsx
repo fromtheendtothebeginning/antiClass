@@ -31,10 +31,12 @@ function useActiveRect(ref, dep) {
 /**
  * 液态玻璃分段切换：玻璃轨道上一块滑块跟着选中项滑动（spring 惯性回弹），
  * 滑块本体在每次移动时轻微拉伸再回弹（液态感）。选项文字/节点由 options.label 给出。
- * 支持按住横向拖动：滑块实时跟手（无过渡），松手落入指下选项并回弹落位。
- * 手势门槛：横向位移 ≥6px 且明显大于纵向才接管——竖滑/斜滑一律留给页面原生滚动
- * （手机端 Tab 换行成两行时也能正常滚页面）；触摸指针不做显式捕获（部分手机内核会
- * 因此拦掉原生滚动），靠触摸自带的隐式捕获接收后续事件，松手 click 用标志位吃掉。
+ * 支持按住拖动换挡，**二维跟手**：滑块横纵都跟随手指（手机端 Tab 换行成两行时，
+ * 可以从第一行拖到第二行），松手落入指下选项并回弹落位。
+ * 位移 ≥6px（任意方向）即接管；轨道 touch-action: none，触摸手势全归滑块、
+ * 不再与页面滚动抢（页面滚动从 Tab 栏下方的内容区划）；触摸指针不做显式捕获
+ * （部分手机内核会因此拦掉原生行为），靠触摸自带的隐式捕获接收后续事件，
+ * 松手 click 用标志位吃掉防误切。
  */
 export default function GlassTabs({ className = "", value, onChange, options, ariaLabel }) {
   const ref = useRef(null);
@@ -76,10 +78,10 @@ export default function GlassTabs({ className = "", value, onChange, options, ar
     const d = dragRef.current;
     const el = ref.current;
     if (!d || !el || e.pointerId !== d.id) return;
+    const dx = e.clientX - d.startX;
+    const dy = e.clientY - d.startY;
     if (!d.moved) {
-      const dx = e.clientX - d.startX;
-      const dy = e.clientY - d.startY;
-      if (Math.abs(dx) < 6 || Math.abs(dx) < Math.abs(dy) * 1.3) return; // 意图不明，不接管
+      if (Math.hypot(dx, dy) < 6) return; // 位移过小 = 还是普通点击，交给按钮自己的 onClick
       d.moved = true;
       if (e.pointerType === "mouse") {
         try {
@@ -90,7 +92,9 @@ export default function GlassTabs({ className = "", value, onChange, options, ar
       }
     }
     const right = Math.max(...d.items.map((it) => it.left + it.width));
-    const left = clamp(d.startLeft + (e.clientX - d.startX), d.items[0].left, right - d.thumbW);
+    const bottom = Math.max(...d.items.map((it) => it.top + it.height));
+    const left = clamp(d.startLeft + dx, d.items[0].left, right - d.thumbW);
+    const top = clamp(d.startTop + dy, d.items[0].top, bottom - d.thumbH);
     const cRect = el.getBoundingClientRect();
     const x = e.clientX - cRect.left;
     const y = e.clientY - cRect.top;
@@ -98,7 +102,7 @@ export default function GlassTabs({ className = "", value, onChange, options, ar
       (it) => x >= it.left && x <= it.left + it.width && y >= it.top && y <= it.top + it.height
     );
     if (hit) d.target = hit.value;
-    setDrag({ left, top: d.startTop, width: d.thumbW, height: d.thumbH, target: d.target });
+    setDrag({ left, top, width: d.thumbW, height: d.thumbH, target: d.target });
   };
 
   const onPointerEnd = (e, commit) => {

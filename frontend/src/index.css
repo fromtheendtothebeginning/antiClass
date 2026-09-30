@@ -554,8 +554,8 @@ button {
   box-shadow: var(--shadow-sm);
   backdrop-filter: blur(var(--glass-blur)) saturate(180%);
   -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(180%);
-  /* 横向拖动换挡归轨道，纵向滚动仍留给页面 */
-  touch-action: pan-y;
+  /* 手势全归滑块（二维跟手，含手机端换行后的纵向拖动）；页面滚动从内容区划 */
+  touch-action: none;
   user-select: none;
   -webkit-user-select: none;
 }
