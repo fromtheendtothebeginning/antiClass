@@ -32,18 +32,22 @@ function useActiveRect(ref, dep) {
  * 液态玻璃分段切换：玻璃轨道上一块滑块跟着选中项滑动（spring 惯性回弹），
  * 滑块本体在每次移动时轻微拉伸再回弹（液态感）。选项文字/节点由 options.label 给出。
  * 支持按住横向拖动：滑块实时跟手（无过渡），松手落入指下选项并回弹落位。
- * 位移超 5px 才算拖动（原地松手仍是普通点击），touch-action: pan-y 不抢纵向滚动。
+ * 手势门槛：横向位移 ≥6px 且明显大于纵向才接管——竖滑/斜滑一律留给页面原生滚动
+ * （手机端 Tab 换行成两行时也能正常滚页面）；触摸指针不做显式捕获（部分手机内核会
+ * 因此拦掉原生滚动），靠触摸自带的隐式捕获接收后续事件，松手 click 用标志位吃掉。
  */
 export default function GlassTabs({ className = "", value, onChange, options, ariaLabel }) {
   const ref = useRef(null);
   const rect = useActiveRect(ref, value);
   const dragRef = useRef(null);
+  const suppressClickRef = useRef(false);
   const [drag, setDrag] = useState(null);
 
   const onPointerDown = (e) => {
     if (e.pointerType === "mouse" && e.button !== 0) return;
     const el = ref.current;
     if (!el || !rect || dragRef.current) return;
+    suppressClickRef.current = false;
     const cRect = el.getBoundingClientRect();
     const buttons = [...el.querySelectorAll(".gtab")];
     dragRef.current = {
@@ -73,12 +77,16 @@ export default function GlassTabs({ className = "", value, onChange, options, ar
     const el = ref.current;
     if (!d || !el || e.pointerId !== d.id) return;
     if (!d.moved) {
-      if (Math.abs(e.clientX - d.startX) < 5) return; // 纵向微动不算拖动，滚动留给页面
+      const dx = e.clientX - d.startX;
+      const dy = e.clientY - d.startY;
+      if (Math.abs(dx) < 6 || Math.abs(dx) < Math.abs(dy) * 1.3) return; // 意图不明，不接管
       d.moved = true;
-      try {
-        el.setPointerCapture(d.id); // 移出轨道也继续跟手，且松手不会误触按钮 click
-      } catch {
-        /* 指针已释放 */
+      if (e.pointerType === "mouse") {
+        try {
+          el.setPointerCapture(d.id); // 鼠标移出轨道也跟手；松手 click 落在容器上不误触按钮
+        } catch {
+          /* 指针已释放 */
+        }
       }
     }
     const right = Math.max(...d.items.map((it) => it.left + it.width));
@@ -98,6 +106,7 @@ export default function GlassTabs({ className = "", value, onChange, options, ar
     if (!d || e.pointerId !== d.id) return;
     dragRef.current = null;
     if (!d.moved) return; // 原地松手 = 普通点击，交给按钮自己的 onClick
+    suppressClickRef.current = true; // 触摸隐式捕获下松手 click 会落在起点按钮上，吃掉防误切
     setDrag(null); // 恢复过渡，滑块 spring 回弹到落位选项
     if (commit && d.target && d.target !== value) onChange(d.target);
   };
@@ -113,6 +122,13 @@ export default function GlassTabs({ className = "", value, onChange, options, ar
       onPointerMove={onPointerMove}
       onPointerUp={(e) => onPointerEnd(e, true)}
       onPointerCancel={(e) => onPointerEnd(e, false)}
+      onClickCapture={(e) => {
+        if (suppressClickRef.current) {
+          e.preventDefault();
+          e.stopPropagation();
+          suppressClickRef.current = false;
+        }
+      }}
     >
       <span
         className={`slide-thumb${thumb ? " on" : ""}`}
