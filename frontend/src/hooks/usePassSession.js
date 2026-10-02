@@ -11,6 +11,7 @@ export function usePassSession({ setError, setSubmitting, setSubmitMsg, loadAwar
   const [passBusy, setPassBusy] = useState(false);
   const [passDone, setPassDone] = useState(false);
   const [passEnded, setPassEnded] = useState(false);
+  const [passProgress, setPassProgress] = useState(null); // 访谈进度 {done,total}（小节）
   const [passInput, setPassInput] = useState("");
   const [passErr, setPassErr] = useState("");
   const [passWarn, setPassWarn] = useState("");
@@ -49,6 +50,7 @@ export function usePassSession({ setError, setSubmitting, setSubmitMsg, loadAwar
       setPassAttach([]);
       setPassDone(false);
       setPassEnded(false);
+      setPassProgress(null);
       setRecallIdx(null);
       setRecallTarget(null);
       // 自动发送「开始」让 AI 提第一个问题（流式）
@@ -154,6 +156,7 @@ export function usePassSession({ setError, setSubmitting, setSubmitMsg, loadAwar
             } else if (ev.type === "done") {
               if (ev.done) setPassDone(true);
               if (ev.ended) setPassEnded(true);
+              if (ev.progress) setPassProgress(ev.progress);
             }
           }
         }
@@ -191,6 +194,7 @@ export function usePassSession({ setError, setSubmitting, setSubmitMsg, loadAwar
       setPassItems((prev) => rebuildPassItems(res.items, prev));
       setPassDone(!!res.done);
       setPassEnded(!!res.ended);
+      if (res.progress) setPassProgress(res.progress);
       // 把被撤回的发言放回输入区，便于改一改再发（附件无法从服务端找回，用本地存的 File 对象）
       setPassInput(clicked && clicked.text !== "开始" ? clicked.text || "" : "");
       setPassAttach((clicked && clicked.fileObjs) || []);
@@ -279,6 +283,7 @@ export function usePassSession({ setError, setSubmitting, setSubmitMsg, loadAwar
       setPassItems([]);
       setPassDone(false);
       setPassEnded(false);
+      setPassProgress(null);
       setPassSid("");
       setPassConfirmSubmit(false);
       setPassNoEvItems([]);
@@ -291,7 +296,7 @@ export function usePassSession({ setError, setSubmitting, setSubmitMsg, loadAwar
   }
 
   return {
-    passSid, setPassSid, passSess, passMsgs, passItems, passBusy, passDone, passEnded,
+    passSid, setPassSid, passSess, passMsgs, passItems, passBusy, passDone, passEnded, passProgress,
     passInput, setPassInput, passErr, passWarn, passAttach, setPassAttach,
     passConfirmSubmit, setPassConfirmSubmit, passNoEvItems, setPassNoEvItems,
     manualOpen, setManualOpen, manualItem, setManualItem,

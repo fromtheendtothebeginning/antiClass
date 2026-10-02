@@ -19,6 +19,25 @@ SESSION_TTL = 3600  # 1 小时无交互自动回收
 CATEGORIES = ["德育", "体育", "美育", "劳育", "附加分"]
 CAP = {"德育": 100, "体育": 100, "美育": 100, "劳育": 100, "附加分": 5}
 
+# 访谈小节清单（按原文推进顺序；sections_done 台账只认这些逐字名称）
+SECTIONS = [
+    "德育-思想政治素养",
+    "德育-社会实践",
+    "德育-荣誉称号与学生骨干",
+    "体育",
+    "美育",
+    "劳育-学科技能竞赛",
+    "劳育-专业证书",
+    "劳育-星级寝室",
+    "劳育-劳动教育",
+    "附加分",
+]
+_SECTIONS_SET = set(SECTIONS)
+
+# 访谈进度台账：已完成小节（按访谈顺序存）/ 待复核事项（学生提前提到、留待对应小节核定）
+def _empty_ledger():
+    return {"sections_done": [], "notes": []}
+
 # 范围外项目硬过滤：即使模型误报也绝不入库（仅用户明确排除的四类）
 OUT_OF_SCOPE_KW = ["第二课堂", "班级活动", "主题团日", "班会", "出勤", "班委", "班长", "团支书"]
 
@@ -47,6 +66,8 @@ SYSTEM_PROMPT = """你是上海应用技术大学智能技术学部综合奖学�
 - 一轮**只提一个问题**。学生回答并给出判定后，最多再进入下一小项提一个新问题；严禁在一轮回复里同时抛多个不同的问题。
 - 问题要**具体、单一、好回答**：一次只问一个栏目里的一小项（如"是否有校级及以上荣誉称号"），不要把整个栏目或多个小项打包问。
 - 按原文顺序推进：德育（思想政治素养→社会实践→荣誉称号与学生骨干）→ 体育 → 美育 → 劳育（学科技能竞赛、专业证书、星级寝室、劳动教育）→ 附加分。上一项问完并判定后再进入下一项，不要跳跃、不要漏项。
+- **小节清单**（sections_done 字段只允许逐字使用这些名称，按此顺序推进）：
+  德育-思想政治素养 → 德育-社会实践 → 德育-荣誉称号与学生骨干 → 体育 → 美育 → 劳育-学科技能竞赛 → 劳育-专业证书 → 劳育-星级寝室 → 劳育-劳动教育 → 附加分
 - **小节过渡**：当某个小部分（如"德育-思想政治素养"）的全部小项都已问完且未确认加分项时，用一句过渡（如"至此德育—思想政治素养部分结束，已确认无加分项。"）小结，然后**立即继续询问下一小部分**，不要停下来问学生"是否继续/还有吗"。
 
 # 栏目归属：一律自查原文，严禁反问学生
@@ -73,14 +94,21 @@ SYSTEM_PROMPT = """你是上海应用技术大学智能技术学部综合奖学�
 **示例（正确）**：原文"社会实践"下有小项"①第二课堂学分达标；②社会实践立项"。问完思想政治素养后，你应**不提①**，直接问"请问你本学期是否参与并立项了社会实践项目（院/校/市级）？组长或组员？"
 **反例（错误）**：输出"社会实践(1)：第二课堂学分达标。请问你本学期第二课堂学分达标了吗？"——这是**绝对禁止**的。
 
+# 访谈进度台账（系统每轮注入，权威进度以此为准）
+- 系统会在每轮消息里注入【访谈进度台账】（已完成小节/剩余小节/待复核事项）。判断"接下来问什么"**以台账为准**，不要依赖对话历史的记忆；台账里已完成的小节**绝不再问**。
+- 待复核事项在推进到对应小节时逐项对照原文核定，核定完（加分或不加分）即从 notes 清单中移除。
+- **全部小节完成后的收尾**：不再提问新问题，逐条复述本会话确认的加分项（栏目、分值、依据），说明提交前可在下方列表核对修改，然后 done=true 结束访谈。
+
 # 输出协议（严格遵守）
 **每一轮**回复都必须以协议收尾：正文结束后，另起一行单独输出机器可读的 JSON 段（**不要**包在```代码块里、**不要**在其后再写任何文字），格式为一行：
 
-==JSON== {"add":[],"done":false}
+==JSON== {"add":[],"done":false,"sections_done":[],"notes":[]}
 
 - `add` 数组内容形如：`{"category":"德育","points":2,"basis":"依据…"}`；本轮**有**加分结论就写入，**没有也一定要输出**（空数组），**绝不允许省略这一行**——系统完全依赖它把加分项显示并提交给学生。
 - **正文的加分判定必须与 add 一一对应**：用户在界面看到的加分列表只来自每轮 `add` 数组。凡是在正文中给出了明确加分结论的项目（"该项加 X 分""确认加分""得分"等），**必须同步写入当轮 add**；add 中的每一项也须在正文有对应说明。正文说加分而 add 漏报，等于该项"判了但没显示/没法提交"，是**严重错误**。
-- `done`：只有学生明确表示"没有更多/结束/就这些"或全部栏目问完才置 `true`；否则 `false`。判定某一项有无加分本身绝不构成结束，正文结尾必须是一句接着问下一个项目的话。
+- `done`：只有学生明确表示"没有更多/结束/就这些"、全部小节完成收尾、或学生主动结束访谈才置 `true`；否则 `false`。判定某一项有无加分本身绝不构成结束，正文结尾必须是一句接着问下一个项目的话。
+- `sections_done`：**已完成小节**的累计清单——只有当该小节内所有小项都已问过且判定完（学生答"没有/无"或已给出加分结论）才计入。名称**逐字**取自小节清单，每轮输出**完整的累计清单**（包含之前各轮已完成的），没有则空数组。
+- `notes`：**待复核事项**清单——学生提前提到、属于尚未问到的小节的内容（如问德育时说"获得蓝桥杯省一"），写成一短条（如"蓝桥杯省级一等奖（待劳育-学科技能竞赛核定）"）。每轮输出当前**仍有效**的清单（已核定完的移除），没有则空数组。
 - 收尾 JSON 之后不要再输出任何文字。
 
 【评分办法原文】：
@@ -164,6 +192,7 @@ def _load_locked(session_id):
         "done": bool(state.get("done")),
         "ended": bool(state.get("ended")),
         "turns": state.get("turns", []),
+        "ledger": state.get("ledger") or _empty_ledger(),
         "busy": 0,
     }
 
@@ -204,7 +233,8 @@ def start(sid, name, class_id):
             "existing": existing,
             "done": False,
             "ended": False,
-            "turns": [],  # 每轮结束打一个切片标记 {"msgs","items","done"}，供 rewind 按轮回滚
+            "turns": [],  # 每轮结束打一个切片标记 {"msgs","items","done","ledger"}，供 rewind 按轮回滚
+            "ledger": _empty_ledger(),  # 访谈进度台账（确定性记录，每轮随协议更新并注入）
             "busy": 0,  # 进行中的轮次数（>0 时拒绝回滚；进程内易失态，不入库）
         }
         _SESSIONS[sess["id"]] = sess
@@ -262,8 +292,14 @@ def _mark_locked(s):
     turns = s["turns"]
     if len(s["messages"]) <= (turns[-1]["msgs"] if turns else 0):
         return
+    led = s.get("ledger") or _empty_ledger()
     turns.append(
-        {"msgs": len(s["messages"]), "items": len(s["items"]), "done": bool(s["done"])}
+        {
+            "msgs": len(s["messages"]),
+            "items": len(s["items"]),
+            "done": bool(s["done"]),
+            "ledger": {"sections_done": list(led["sections_done"]), "notes": list(led["notes"])},
+        }
     )
 
 
@@ -315,9 +351,13 @@ def rewind(session_id, keep_users):
         s["items"] = s["items"][: mark["items"]] if mark else []
         s["done"] = bool(mark["done"]) if mark else False
         s["turns"] = turns[:keep_turns]
+        # 台账随轮次快照回滚（旧标记无 ledger 字段则回空台账）
+        snap = (mark or {}).get("ledger") or _empty_ledger()
+        s["ledger"] = {"sections_done": list(snap["sections_done"]), "notes": list(snap["notes"])}
         s["ended"] = False  # 撤回了就能继续对话（finish 会同时置 done+ended）
         s["updated"] = time.time()  # 与 touch_updated 等价；持锁中不能调会再加锁的函数
         _persist_locked(s)
+        led = s["ledger"]
         return {
             "ok": True,
             "kept_turns": keep_turns,
@@ -325,6 +365,7 @@ def rewind(session_id, keep_users):
             "items": list(s["items"]),  # 快照返回（回滚后的权威全量，前端据此重建列表）
             "done": s["done"],
             "ended": False,
+            "progress": {"done": len(led["sections_done"]), "total": len(SECTIONS)},
         }
 
 
@@ -456,6 +497,26 @@ def run_turn(session_id, user_text, image_paths=None):
                 "content": "【本会话已确认的加分项（只读，不得重复判定或再次上报）】\n" + summary,
             }
         )
+    # 注入访谈进度台账（确定性记录）：已完成/剩余小节 + 待复核事项，防长对话进度漂移；
+    # 全部小节完成时下达收尾指令（补充轮有自己的指令，不重复注入）
+    ledger = sess.get("ledger") or _empty_ledger()
+    done_set = set(ledger["sections_done"])
+    if ledger["sections_done"] or ledger["notes"]:
+        remaining = [x for x in SECTIONS if x not in done_set]
+        lines = ["【访谈进度台账（确定性记录，判断进度以此为准）】"]
+        lines.append("- 已完成小节：" + ("、".join(ledger["sections_done"]) or "无"))
+        lines.append("- 剩余小节：" + ("、".join(remaining) or "无"))
+        if ledger["notes"]:
+            lines.append("- 待复核事项（推进到对应小节时逐项核定，核定后移除）：")
+            lines.extend(f"  - {n}" for n in ledger["notes"])
+        messages.append({"role": "system", "content": "\n".join(lines)})
+    if not was_done and not sess["done"] and ledger["sections_done"] and len(done_set) >= len(SECTIONS):
+        messages.append(
+            {
+                "role": "system",
+                "content": "【收尾】访谈小节已全部完成：不要再提问新问题，逐条复述本会话确认的加分项（栏目、分值、依据），说明提交前可在下方列表核对修改，然后输出 done=true 结束访谈。",
+            }
+        )
     # 注入该生系统中已存在的申报/加分记录（只读）→ 命中这些的不再询问与上报，避免重复加分
     existing = sess.get("existing") or []
     if existing:
@@ -536,13 +597,29 @@ def run_turn(session_id, user_text, image_paths=None):
             continue
         new_items.append({"category": category, "points": points, "basis": basis})
 
+    # 进度台账更新：sections_done 与白名单求并集（防某轮漏报导致进度回退；推进只向前），
+    # notes 整体替换为当轮最新清单（已核定的事项由模型移除）
+    ledger = sess.get("ledger") or _empty_ledger()
+    sd = payload.get("sections_done") if isinstance(payload, dict) else None
+    if isinstance(sd, list):
+        done_set = set(ledger["sections_done"]) | {
+            x.strip() for x in sd if isinstance(x, str) and x.strip() in _SECTIONS_SET
+        }
+        ledger["sections_done"] = [x for x in SECTIONS if x in done_set]  # 按访谈顺序存
+    nt = payload.get("notes") if isinstance(payload, dict) else None
+    if isinstance(nt, list):
+        ledger["notes"] = [t.strip()[:100] for t in (x for x in nt if isinstance(x, str)) if t.strip()][:8]
+
     with _LOCK:
         sess["items"].extend(new_items)
+        sess["ledger"] = ledger
         sess["done"] = sess["done"] or done
         # 补充轮（was_done）结束后彻底结束会话
         if was_done:
             sess["ended"] = True
-        sess["messages"].append({"role": "assistant", "content": body or "（本轮无输出）"})
+        # 历史保留原始 ==JSON== 协议行：上一轮的协议输出是下一轮格式遵从的最强锚点，
+        # 剥掉协议会让模型从第 2 轮起就不再输出协议行（实测 deepseek 4 轮内全部漏报）
+        sess["messages"].append({"role": "assistant", "content": full or "（本轮无输出）"})
 
     if new_items:
         yield {"type": "add", "items": list(new_items)}
@@ -568,5 +645,6 @@ def run_turn(session_id, user_text, image_paths=None):
         "done": sess["done"],
         "ended": sess.get("ended", False),
         "items": list(sess["items"]),
+        "progress": {"done": len(ledger["sections_done"]), "total": len(SECTIONS)},
         "text": None if new_items or not body else "",
     }

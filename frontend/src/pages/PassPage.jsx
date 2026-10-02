@@ -13,7 +13,7 @@ import { CATEGORY_OPTIONS } from "../constants.js";
 
 export default function PassPage({chat, classes, classSel, handlePickClass, students, submitting}) {
   const {
-    passSid, setPassSid, passSess, passMsgs, passItems, passBusy, passDone, passEnded, passInput, setPassInput,
+    passSid, setPassSid, passSess, passMsgs, passItems, passBusy, passDone, passEnded, passProgress, passInput, setPassInput,
     passErr, passWarn, passAttach, setPassAttach, passConfirmSubmit, setPassConfirmSubmit, passNoEvItems,
     setPassNoEvItems, manualOpen, setManualOpen, manualItem, setManualItem, recallIdx, setRecallIdx,
     recallTarget, setRecallTarget, recalling, chatBoxRef, passInputRef, handlePassStart, handlePassQuick,
@@ -185,6 +185,10 @@ export default function PassPage({chat, classes, classSel, handlePickClass, stud
                     className="chat-attach-preview"
                     onRemove={(i) => setPassAttach((prev) => prev.filter((_, j) => j !== i))}
                   />
+
+                  {passSess && passProgress && passProgress.total > 0 && (
+                    <div className="file-count">访谈进度：{passProgress.done}/{passProgress.total} 小节已完成</div>
+                  )}
 
                   {passItems.length === 0 && (
                     <div className="assess-items edit">
