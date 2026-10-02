@@ -271,6 +271,7 @@ export default function App() {
     setProfile({ nickname: "", avatar: "" });
     // 退出后成为访客：回到配置的「开始界面」（未配置则只显示侧边栏）
     setTab((t) => (PUBLIC_TABS.includes(t) ? t : landingTab)); // 登录态专属界面（数据管理/配置）随之退出
+    schTabRef.current = "board"; // 防止记住的子页面是登录态专属（如数据管理），点「奖学金评定」落空
     setLoginNotice(msg || "登录已过期，请重新登录");
     setLoginOpen(true);
   }
@@ -286,6 +287,7 @@ export default function App() {
     setAccount("");
     setProfile({ nickname: "", avatar: "" });
     setTab((t) => (PUBLIC_TABS.includes(t) ? t : landingTab));
+    schTabRef.current = "board";
     setLoginNotice("");
   }
 

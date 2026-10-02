@@ -2679,9 +2679,9 @@ textarea.tf-input.mono {
   .shell-nav {
     position: static;
     flex-direction: row;
+    flex-wrap: wrap;
     align-items: center;
     gap: 10px;
-    overflow-x: auto;
     padding: 10px 12px;
   }
 
@@ -2697,6 +2697,7 @@ textarea.tf-input.mono {
 
   .nav-group {
     flex-direction: row;
+    flex-wrap: wrap;
     align-items: center;
   }
 
