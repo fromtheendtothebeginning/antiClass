@@ -17,6 +17,8 @@ function useActiveRect(ref, dep) {
           width: active.offsetWidth,
           height: active.offsetHeight
         });
+      } else {
+        setRect(null); // value 不匹配任何选项（如侧栏另一组激活）时收起滑块，不能残留旧位置
       }
     };
     measure();

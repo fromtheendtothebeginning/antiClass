@@ -72,9 +72,10 @@ export default function App() {
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
-  // 登录弹窗：字段级行内错误、提交中标记（服务端错误仍走 error/loginNotice）
+  // 登录弹窗：字段级行内错误、提交中标记（服务端错误仍走 error/loginNotice）、密码可见性
   const [loginFieldErr, setLoginFieldErr] = useState({});
   const [loginBusy, setLoginBusy] = useState(false);
+  const [loginShowPass, setLoginShowPass] = useState(false);
 
   const [students, setStudents] = useState([]);
   const [meta, setMeta] = useState({});
@@ -299,8 +300,6 @@ export default function App() {
     if (next === "approve") loadAwards();
   }
 
-  const navItemCls = (on) => (on ? "nav-item active" : "nav-item");
-
   const pendingCount = awards.filter((a) => a.approved === "否").length;
 
   async function handleExport() {
@@ -356,7 +355,7 @@ export default function App() {
       </header>
 
       {/* 侧边栏所有访客都显示（不登录也能看榜单/申报/审批）；tab 为空 = 刚进入，只有侧边栏、不显示任何界面。
-          以后新增功能界面 = 这里加一条 nav-item + main 里加一个 {tab === "xxx" && …} 分支。 */}
+          功能栏目用 GlassTabs 液态滑块（与二级 Tab 同款）；以后新增功能界面 = 对应组的 options 加一项 + main 里加一个 {tab === "xxx" && …} 分支。 */}
       <div className="shell">
         <aside className="shell-nav">
           {token && (
@@ -370,25 +369,35 @@ export default function App() {
           )}
           <div className="nav-group">
             <span className="nav-group-title">统计界面</span>
-            <button
-              className={navItemCls(SCH_TABS.includes(tab))}
-              onClick={() => switchTab(schTabRef.current)}
-            >
-              奖学金评定
-            </button>
+            {/* 伪值 "sch"：奖学金评定组覆盖 5 个子页，激活态由 tab 是否属于 SCH_TABS 决定 */}
+            <GlassTabs
+              className="nav-tabs"
+              ariaLabel="统计界面"
+              value={SCH_TABS.includes(tab) ? "sch" : tab}
+              onChange={() => switchTab(schTabRef.current)}
+              options={[{ value: "sch", label: "奖学金评定" }]}
+            />
           </div>
           {token && (
             <div className="nav-group">
               <span className="nav-group-title">配置</span>
-              {role === "root" && (
-                <button className={navItemCls(tab === "cfg_model")} onClick={() => switchTab("cfg_model")}>模型配置</button>
-              )}
-              {role === "root" && (
-                <button className={navItemCls(tab === "cfg_accounts")} onClick={() => switchTab("cfg_accounts")}>账号管理</button>
-              )}
-              <button className={navItemCls(tab === "cfg_appearance")} onClick={() => switchTab("cfg_appearance")}>背景图案</button>
-              <button className={navItemCls(tab === "cfg_landing")} onClick={() => switchTab("cfg_landing")}>开始界面</button>
-              <button className={navItemCls(tab === "cfg_profile")} onClick={() => switchTab("cfg_profile")}>个人资料</button>
+              <GlassTabs
+                className="nav-tabs"
+                ariaLabel="配置"
+                value={tab}
+                onChange={switchTab}
+                options={[
+                  ...(role === "root"
+                    ? [
+                        { value: "cfg_model", label: "模型配置" },
+                        { value: "cfg_accounts", label: "账号管理" },
+                      ]
+                    : []),
+                  { value: "cfg_appearance", label: "背景图案" },
+                  { value: "cfg_landing", label: "开始界面" },
+                  { value: "cfg_profile", label: "个人资料" },
+                ]}
+              />
             </div>
           )}
         </aside>
@@ -523,9 +532,10 @@ export default function App() {
         title="登录"
         showConfirm={false}
         cancelText="取消"
-        onCancel={() => { setLoginOpen(false); setPassword(""); setError(""); setLoginFieldErr({}); }}
+        onCancel={() => { setLoginOpen(false); setPassword(""); setError(""); setLoginFieldErr({}); setLoginShowPass(false); }}
       >
         <form className="login-form" onSubmit={handleLoginSubmit} noValidate>
+          <p className="login-hint">管理员登录后可进行审批、调分与数据管理</p>
           {loginNotice && <div className="login-server-error warn" role="alert">{loginNotice}</div>}
           {error && <div className="login-server-error" role="alert">{error}</div>}
 
@@ -549,24 +559,35 @@ export default function App() {
 
           <div className="login-field">
             <label className="login-label" htmlFor="login-password">密码</label>
-            <TextField
-              id="login-password"
-              className={`login-input${loginFieldErr.password ? " invalid" : ""}`}
-              type="password"
-              value={password}
-              onChange={(e) => {
-                setPassword(e.target.value);
-                if (loginFieldErr.password) setLoginFieldErr({ ...loginFieldErr, password: "" });
-              }}
-              placeholder="请输入密码"
-              autoComplete="current-password"
-              aria-invalid={loginFieldErr.password ? "true" : undefined}
-            />
+            <div className="login-pass-wrap">
+              <TextField
+                id="login-password"
+                className={`login-input${loginFieldErr.password ? " invalid" : ""}`}
+                type={loginShowPass ? "text" : "password"}
+                value={password}
+                onChange={(e) => {
+                  setPassword(e.target.value);
+                  if (loginFieldErr.password) setLoginFieldErr({ ...loginFieldErr, password: "" });
+                }}
+                placeholder="请输入密码"
+                autoComplete="current-password"
+                aria-invalid={loginFieldErr.password ? "true" : undefined}
+              />
+              <button
+                type="button"
+                className="login-pass-toggle"
+                aria-pressed={loginShowPass}
+                aria-label={loginShowPass ? "隐藏密码" : "显示密码"}
+                onClick={() => setLoginShowPass((v) => !v)}
+              >
+                {loginShowPass ? "隐藏" : "显示"}
+              </button>
+            </div>
             {loginFieldErr.password && <span className="login-field-error" role="alert">{loginFieldErr.password}</span>}
           </div>
 
           <button type="submit" className="btn login-submit" aria-busy={loginBusy ? "true" : undefined} disabled={loginBusy}>
-            {loginBusy ? "登录中…" : "登 录"}
+            {loginBusy ? <><span className="spin" /> 登录中…</> : "登 录"}
             {!loginBusy && <span className="login-arrow" aria-hidden="true">→</span>}
           </button>
         </form>

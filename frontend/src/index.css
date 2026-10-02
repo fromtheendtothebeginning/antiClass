@@ -913,6 +913,7 @@ button {
 .result-item {
   display: flex;
   align-items: center;
+  flex-wrap: wrap; /* 窄屏兜底：行内容放不下时折行而不是横向溢出 */
   gap: 10px;
   padding: 10px 14px;
   background: var(--bg-elevated);
@@ -925,6 +926,56 @@ button {
 
 .result-item:hover {
   border-color: var(--accent-1-border);
+}
+
+/* result-item 内部语义行：桌面保持单行排版（head 在前、次要信息随后、按钮靠右），
+   手机端（见文件末尾移动端段）由 .manage-list 作用域卡片化堆叠 */
+.ri-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+
+.ri-sub {
+  font-size: 13px;
+  color: var(--text-secondary);
+  min-width: 0;
+}
+
+.ri-actions {
+  margin-left: auto;
+  display: flex;
+  gap: 8px;
+  flex: 0 0 auto;
+}
+
+/* 手机端：班级管理/账号管理（.manage-list 内）从单行改为卡片堆叠——
+   名称+徽章/人数一行，次要信息弱化一行，操作按钮等宽一行；不再挤压溢出 */
+@media (max-width: 768px) {
+  .manage-list .result-item {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 8px;
+    padding: 12px 14px;
+  }
+
+  .manage-list .ri-head {
+    justify-content: space-between;
+  }
+
+  .manage-list .ri-sub {
+    font-size: 12.5px;
+    color: var(--text-muted);
+  }
+
+  .manage-list .ri-actions {
+    margin-left: 0;
+  }
+
+  .manage-list .ri-actions .btn {
+    flex: 1;
+  }
 }
 
 /* ---------- AI 草稿审核 ---------- */
@@ -2372,10 +2423,10 @@ button {
 /* 弹窗标题做成页头 */
 .modal-sheet.login-sheet h3 {
   margin: 0;
-  padding: 16px 26px;
-  font-size: 15px;
+  padding: 16px 26px 14px;
+  font-size: 16px;
   font-weight: 600;
-  color: var(--text-secondary);
+  color: var(--text-primary);
   letter-spacing: 0.02em;
   background: var(--bg-elevated);
   border-bottom: 1px solid var(--border-color);
@@ -2395,7 +2446,8 @@ button {
   min-width: 0;
 }
 
-/* 服务端错误条（红色）/ 会话过期提示条（青色 warn） */
+/* 服务端错误条（红色）/ 会话过期提示条（青色 warn）；
+   红色错误条出现时轻晃一次提醒（跟系统减动效设置时不晃） */
 .login-server-error {
   padding: 10px 14px;
   border-radius: 10px;
@@ -2404,12 +2456,22 @@ button {
   color: var(--danger);
   font-size: 13px;
   line-height: 1.5;
+  animation: login-shake 0.4s ease-out;
+}
+
+@keyframes login-shake {
+  0%, 100% { transform: translateX(0); }
+  20% { transform: translateX(-5px); }
+  40% { transform: translateX(5px); }
+  60% { transform: translateX(-3px); }
+  80% { transform: translateX(3px); }
 }
 
 .login-server-error.warn {
   background: var(--accent-2-soft);
   border-color: var(--accent-2-hover);
   color: var(--text-primary);
+  animation: none;
 }
 
 .login-field {
@@ -2452,6 +2514,49 @@ button {
 
 .login-submit:hover:not(:disabled) .login-arrow {
   transform: translateX(4px);
+}
+
+/* 弹窗体顶部的一句说明：登录后能用什么 */
+.login-hint {
+  margin: 0;
+  font-size: 12.5px;
+  line-height: 1.5;
+  color: var(--text-muted);
+}
+
+/* 密码可见性切换：文字按钮内嵌输入框右侧（功能位，不用图标） */
+.login-pass-wrap {
+  position: relative;
+}
+
+.login-pass-wrap .tf-input {
+  padding-right: 64px;
+}
+
+.login-pass-toggle {
+  position: absolute;
+  right: 7px;
+  top: 50%;
+  transform: translateY(-50%);
+  height: 28px;
+  padding: 0 10px;
+  border: none;
+  border-radius: 8px;
+  background: transparent;
+  font-size: 12.5px;
+  font-family: inherit;
+  color: var(--accent-1);
+  cursor: pointer;
+  transition: background 0.3s var(--ease-spring);
+}
+
+.login-pass-toggle:hover {
+  background: var(--accent-1-soft);
+}
+
+.login-pass-toggle:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: 1px;
 }
 
 /* 页脚取消按钮：沿用 .modal-actions .btn 的 flex:1 通栏，与「登录」等宽（左右内边距同为 26px）；
@@ -2639,36 +2744,23 @@ textarea.tf-input.mono {
   color: var(--text-muted);
 }
 
-.nav-item {
-  display: block;
+/* 侧栏功能栏目（GlassTabs 液态滑块变体）：侧栏本身已是玻璃面板，
+   轨道去壳（去背景/边框/阴影/blur，嵌套小元素不再加 blur），只留滑块与选项药丸 */
+.nav-tabs.glass-tabs {
   width: 100%;
-  padding: 9px 12px;
-  border: 1px solid transparent;
-  border-radius: 10px;
+  padding: 0;
+  border: none;
+  border-radius: 12px;
   background: transparent;
-  color: var(--text-secondary);
+  background-image: none;
+  box-shadow: none;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+}
+
+.nav-tabs .gtab {
+  padding: 8px 14px;
   font-size: 13.5px;
-  font-family: inherit;
-  text-align: left;
-  cursor: pointer;
-  transition: background 0.5s var(--ease-spring), color 0.5s var(--ease-spring), border-color 0.5s var(--ease-spring), transform 0.5s var(--ease-spring);
-}
-
-.nav-item:hover {
-  background: var(--accent-1-soft);
-  color: var(--text-primary);
-}
-
-.nav-item:active {
-  transform: scale(0.98);
-  transition-duration: 0.15s;
-}
-
-.nav-item.active {
-  background: var(--accent-1-soft-strong);
-  border-color: var(--accent-1-border);
-  color: var(--accent-1);
-  font-weight: 600;
 }
 
 @media (max-width: 768px) {
@@ -2705,10 +2797,8 @@ textarea.tf-input.mono {
     display: none;
   }
 
-  .nav-item {
-    width: auto;
-    white-space: nowrap;
-    padding: 8px 12px;
+  .nav-tabs .gtab {
+    padding: 7px 12px;
   }
 }
 

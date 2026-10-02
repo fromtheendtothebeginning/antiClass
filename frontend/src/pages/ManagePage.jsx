@@ -71,20 +71,24 @@ export default function ManagePage({manage, token, role, myClassId, classes, man
                 <div className="manage-list">
                   {classes.map((c) => (
                     <div key={c.id} className="result-item">
-                      <strong>{c.name}</strong>
-                      <span>{c.students} 名学生</span>
-                      <span>{c.row_count ?? 0} 条课程记录 · {c.source || "未导入"}</span>
-                      <button
-                        className="btn small danger"
-                        disabled={c.students === 0}
-                        onClick={() => setClearClassTarget({ id: c.id, name: c.name })}
-                      >清除数据</button>
-                      <button
-                        className="btn small danger"
-                        disabled={c.students > 0}
-                        onClick={() => setDeleteClassTarget({ id: c.id, name: c.name })}
-                        title={c.students > 0 ? "班级仍有学生，无法删除" : undefined}
-                      >删除</button>
+                      <div className="ri-head">
+                        <strong>{c.name}</strong>
+                        <span className="ri-sub">{c.students} 名学生</span>
+                      </div>
+                      <span className="ri-sub">{c.row_count ?? 0} 条课程记录 · {c.source || "未导入"}</span>
+                      <div className="ri-actions">
+                        <button
+                          className="btn small danger"
+                          disabled={c.students === 0}
+                          onClick={() => setClearClassTarget({ id: c.id, name: c.name })}
+                        >清除数据</button>
+                        <button
+                          className="btn small danger"
+                          disabled={c.students > 0}
+                          onClick={() => setDeleteClassTarget({ id: c.id, name: c.name })}
+                          title={c.students > 0 ? "班级仍有学生，无法删除" : undefined}
+                        >删除</button>
+                      </div>
                     </div>
                   ))}
                   {classes.length === 0 && <p className="hint">暂无班级。</p>}

@@ -20,12 +20,16 @@ export default function AccountsPage({accounts, classes, manageMsg}) {
               <div className="manage-list">
                 {adminsList.map((a) => (
                   <div key={a.username} className="result-item">
-                    <strong>{a.username}</strong>
-                    <span className="badge">{a.role === "root" ? "超级管理员" : "管理员"}</span>
-                    <span>{a.nickname || "（未设昵称）"}</span>
-                    <span>{classes.find((c) => c.id === a.class_id)?.name || "全部班级"}</span>
+                    <div className="ri-head">
+                      <strong>{a.username}</strong>
+                      <span className="badge">{a.role === "root" ? "超级管理员" : "管理员"}</span>
+                    </div>
+                    <span className="ri-sub">{a.nickname || "（未设昵称）"}</span>
+                    <span className="ri-sub">{classes.find((c) => c.id === a.class_id)?.name || "全部班级"}</span>
                     {a.role !== "root" && (
-                      <button className="btn small danger" onClick={() => setDeleteAdminTarget(a.username)}>删除</button>
+                      <div className="ri-actions">
+                        <button className="btn small danger" onClick={() => setDeleteAdminTarget(a.username)}>删除</button>
+                      </div>
                     )}
                   </div>
                 ))}
