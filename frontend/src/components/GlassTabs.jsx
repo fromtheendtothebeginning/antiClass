@@ -33,6 +33,8 @@ function useActiveRect(ref, dep) {
 /**
  * 液态玻璃分段切换：玻璃轨道上一块滑块跟着选中项滑动（spring 惯性回弹），
  * 滑块本体在每次移动时轻微拉伸再回弹（液态感）。选项文字/节点由 options.label 给出。
+ * 选项支持 {sep: true, label} 分隔项：渲染为轨道内的整行小标题（不参与滑块测量与
+ * 拖动命中，只做视觉分组；侧栏 .nav-tabs 用它承载「统计界面/配置」组名）。
  * 支持按住拖动换挡，**二维跟手**：滑块横纵都跟随手指（手机端 Tab 换行成两行时，
  * 可以从第一行拖到第二行），松手落入指下选项并回弹落位。
  * 位移 ≥6px（任意方向）即接管；轨道 touch-action: none，触摸手势全归滑块、
@@ -53,6 +55,8 @@ export default function GlassTabs({ className = "", value, onChange, options, ar
     if (!el || !rect || dragRef.current) return;
     suppressClickRef.current = false;
     const cRect = el.getBoundingClientRect();
+    // values 与 .gtab 按钮一一对齐（分隔项不在 .gtab 里，须从 options 中剔除）
+    const values = options.filter((o) => !o.sep).map((o) => o.value);
     const buttons = [...el.querySelectorAll(".gtab")];
     dragRef.current = {
       id: e.pointerId,
@@ -66,7 +70,7 @@ export default function GlassTabs({ className = "", value, onChange, options, ar
       items: buttons.map((b, i) => {
         const r = b.getBoundingClientRect();
         return {
-          value: options[i]?.value,
+          value: values[i],
           left: r.left - cRect.left,
           top: r.top - cRect.top,
           width: r.width,
@@ -144,19 +148,25 @@ export default function GlassTabs({ className = "", value, onChange, options, ar
         {/* key 变化 = 重新播放拉伸动画；位移动画由外层 transform 过渡承担，互不打架。拖动中 key 固定，避免每帧重播 */}
         <span className="slide-thumb-goo" key={drag ? "drag" : rect ? `${rect.left}:${rect.top}:${rect.width}` : "init"} />
       </span>
-      {options.map((o) => (
-        <button
-          key={o.value}
-          type="button"
-          aria-selected={value === o.value}
-          data-active={value === o.value ? "1" : undefined}
-          title={o.title}
-          className={`gtab${value === o.value ? " active" : ""}${drag && drag.target === o.value && o.value !== value ? " drag-target" : ""}`}
-          onClick={() => onChange(o.value)}
-        >
-          {o.label}
-        </button>
-      ))}
+      {options.map((o) =>
+        o.sep ? (
+          <span key={`sep-${o.label}`} className="gtab-sep" aria-hidden="true">
+            {o.label}
+          </span>
+        ) : (
+          <button
+            key={o.value}
+            type="button"
+            aria-selected={value === o.value}
+            data-active={value === o.value ? "1" : undefined}
+            title={o.title}
+            className={`gtab${value === o.value ? " active" : ""}${drag && drag.target === o.value && o.value !== value ? " drag-target" : ""}`}
+            onClick={() => onChange(o.value)}
+          >
+            {o.label}
+          </button>
+        )
+      )}
     </div>
   );
 }

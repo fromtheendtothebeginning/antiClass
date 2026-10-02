@@ -20,6 +20,8 @@ const FOCUSABLE = "input:not([disabled]), select:not([disabled]), textarea:not([
  * @param {boolean} [showCancel=true] - 是否显示取消按钮（也决定点遮罩能否关闭）
  * @param {boolean} [confirmDisabled=false] - 确认按钮禁用
  * @param {boolean} [closeOnOverlay=true] - 点击遮罩层（非弹窗内容）是否等同取消
+ * @param {boolean} [alignTop=false] - 手机端（≤768px）弹窗贴顶而非垂直居中：带键盘的表单弹窗
+ *   聚焦时浏览器无需把可视视口往上推，整块内容（含提交按钮）始终留在屏幕内；桌面端不受影响
  * @param {function} onConfirm - 确认回调
  * @param {function} onCancel - 取消/关闭回调（Esc、取消按钮、点遮罩都走它）
  */
@@ -37,6 +39,7 @@ function Modal({
   showCancel = true,
   confirmDisabled = false,
   closeOnOverlay = true,
+  alignTop = false,
   onConfirm,
   onCancel
 }) {
@@ -105,7 +108,7 @@ function Modal({
   };
 
   return createPortal(
-    <div className="modal-overlay" role="dialog" aria-modal="true" onClick={onOverlayClick}>
+    <div className={`modal-overlay${alignTop ? " modal-align-top" : ""}`} role="dialog" aria-modal="true" onClick={onOverlayClick}>
       <div
         ref={sheetRef}
         tabIndex={-1}

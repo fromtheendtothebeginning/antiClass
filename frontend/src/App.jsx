@@ -355,7 +355,8 @@ export default function App() {
       </header>
 
       {/* 侧边栏所有访客都显示（不登录也能看榜单/申报/审批）；tab 为空 = 刚进入，只有侧边栏、不显示任何界面。
-          功能栏目用 GlassTabs 液态滑块（与二级 Tab 同款）；以后新增功能界面 = 对应组的 options 加一项 + main 里加一个 {tab === "xxx" && …} 分支。 */}
+          功能栏目是一条 GlassTabs 液态滑块轨道（组名 = 轨道内 {sep:true} 分隔行），滑块跨组连续滑动；
+          以后新增功能界面 = options 加一项 + main 里加一个 {tab === "xxx" && …} 分支。 */}
       <div className="shell">
         <aside className="shell-nav">
           {token && (
@@ -367,39 +368,27 @@ export default function App() {
               </div>
             </div>
           )}
-          <div className="nav-group">
-            <span className="nav-group-title">统计界面</span>
-            {/* 伪值 "sch"：奖学金评定组覆盖 5 个子页，激活态由 tab 是否属于 SCH_TABS 决定 */}
-            <GlassTabs
-              className="nav-tabs"
-              ariaLabel="统计界面"
-              value={SCH_TABS.includes(tab) ? "sch" : tab}
-              onChange={() => switchTab(schTabRef.current)}
-              options={[{ value: "sch", label: "奖学金评定" }]}
-            />
-          </div>
-          {token && (
-            <div className="nav-group">
-              <span className="nav-group-title">配置</span>
-              <GlassTabs
-                className="nav-tabs"
-                ariaLabel="配置"
-                value={tab}
-                onChange={switchTab}
-                options={[
-                  ...(role === "root"
-                    ? [
-                        { value: "cfg_model", label: "模型配置" },
-                        { value: "cfg_accounts", label: "账号管理" },
-                      ]
-                    : []),
-                  { value: "cfg_appearance", label: "背景图案" },
-                  { value: "cfg_landing", label: "开始界面" },
-                  { value: "cfg_profile", label: "个人资料" },
-                ]}
-              />
-            </div>
-          )}
+          {/* 伪值 "sch"：奖学金评定覆盖 5 个子页，激活态由 tab 是否属于 SCH_TABS 决定 */}
+          <GlassTabs
+            className="nav-tabs"
+            ariaLabel="功能栏目"
+            value={SCH_TABS.includes(tab) ? "sch" : tab}
+            onChange={(v) => (v === "sch" ? switchTab(schTabRef.current) : switchTab(v))}
+            options={[
+              { sep: true, label: "统计界面" },
+              { value: "sch", label: "奖学金评定" },
+              { sep: true, label: "配置" },
+              ...(role === "root"
+                ? [
+                    { value: "cfg_model", label: "模型配置" },
+                    { value: "cfg_accounts", label: "账号管理" },
+                  ]
+                : []),
+              { value: "cfg_appearance", label: "背景图案" },
+              { value: "cfg_landing", label: "开始界面" },
+              { value: "cfg_profile", label: "个人资料" },
+            ]}
+          />
         </aside>
 
         <div className="shell-body">
@@ -532,10 +521,10 @@ export default function App() {
         title="登录"
         showConfirm={false}
         cancelText="取消"
+        alignTop
         onCancel={() => { setLoginOpen(false); setPassword(""); setError(""); setLoginFieldErr({}); setLoginShowPass(false); }}
       >
         <form className="login-form" onSubmit={handleLoginSubmit} noValidate>
-          <p className="login-hint">管理员登录后可进行审批、调分与数据管理</p>
           {loginNotice && <div className="login-server-error warn" role="alert">{loginNotice}</div>}
           {error && <div className="login-server-error" role="alert">{error}</div>}
 

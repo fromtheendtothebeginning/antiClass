@@ -2516,14 +2516,6 @@ button {
   transform: translateX(4px);
 }
 
-/* 弹窗体顶部的一句说明：登录后能用什么 */
-.login-hint {
-  margin: 0;
-  font-size: 12.5px;
-  line-height: 1.5;
-  color: var(--text-muted);
-}
-
 /* 密码可见性切换：文字按钮内嵌输入框右侧（功能位，不用图标） */
 .login-pass-wrap {
   position: relative;
@@ -2571,13 +2563,43 @@ button {
   font-size: 15px;
 }
 
+/* 手机端登录弹窗：贴顶 + 整体紧凑化——键盘弹出时浏览器无需把可视视口往上推，
+   标题/账号/密码/登录/取消整块始终留在屏幕内（此前居中布局会把登录按钮顶出屏幕） */
 @media (max-width: 768px) {
+  .modal-overlay.modal-align-top {
+    align-items: flex-start;
+    padding-top: max(10px, env(safe-area-inset-top));
+  }
+
+  /* .modal-sheet 的 margin:auto 在 flex 里优先级高于 align-items，贴顶必须一并清掉 */
+  .modal-overlay.modal-align-top .modal-sheet {
+    margin: 0;
+  }
+
+  .modal-sheet.login-sheet h3 {
+    padding: 14px 20px 12px;
+  }
+
   .modal-sheet.login-sheet .modal-body {
-    padding: 18px 20px 4px;
+    padding: 14px 20px 4px;
+    gap: 10px;
+  }
+
+  .login-form {
+    gap: 12px;
+  }
+
+  .login-submit {
+    height: 44px;
+    margin-top: 2px;
   }
 
   .modal-sheet.login-sheet .modal-actions {
-    padding: 10px 20px 18px;
+    padding: 8px 20px 16px;
+  }
+
+  .modal-sheet.login-sheet .modal-actions .btn {
+    height: 44px;
   }
 }
 
@@ -2730,22 +2752,11 @@ textarea.tf-input.mono {
   object-fit: cover;
 }
 
-.nav-group {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-}
-
-.nav-group-title {
-  padding: 0 10px 4px;
-  font-size: 11px;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-  color: var(--text-muted);
-}
+/* （.nav-group/.nav-group-title 已随侧栏并入单条 GlassTabs 轨道删除，组名见 .gtab-sep） */
 
 /* 侧栏功能栏目（GlassTabs 液态滑块变体）：侧栏本身已是玻璃面板，
-   轨道去壳（去背景/边框/阴影/blur，嵌套小元素不再加 blur），只留滑块与选项药丸 */
+   轨道去壳（去背景/边框/阴影/blur，嵌套小元素不再加 blur），只留滑块与选项药丸；
+   组名（统计界面/配置）是轨道内 .gtab-sep 分隔行，滑块跨组连续滑动 */
 .nav-tabs.glass-tabs {
   width: 100%;
   padding: 0;
@@ -2756,11 +2767,28 @@ textarea.tf-input.mono {
   box-shadow: none;
   backdrop-filter: none;
   -webkit-backdrop-filter: none;
+  gap: 3px;
 }
 
 .nav-tabs .gtab {
   padding: 8px 14px;
   font-size: 13.5px;
+}
+
+/* 轨道内分组标题：整行占位（顺带当作换行点），不参与滑块测量与拖动命中 */
+.gtab-sep {
+  flex-basis: 100%;
+  padding: 5px 14px 1px;
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+.gtab-sep:first-child {
+  padding-top: 0;
 }
 
 @media (max-width: 768px) {
@@ -2787,14 +2815,8 @@ textarea.tf-input.mono {
     display: none;
   }
 
-  .nav-group {
-    flex-direction: row;
-    flex-wrap: wrap;
-    align-items: center;
-  }
-
-  .nav-group-title {
-    display: none;
+  .gtab-sep {
+    display: none; /* 手机端隐藏组名分隔行，六个栏目连续流式排列 */
   }
 
   .nav-tabs .gtab {
