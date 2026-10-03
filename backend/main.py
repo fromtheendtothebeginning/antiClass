@@ -1,5 +1,5 @@
 # main.py — 应用组装入口：创建 FastAPI、挂载各域路由、启动迁移/播种、静态托管前端。
-# 路由按业务域拆在 routers/（auth/appearance/assess/manage/board/awards/ai_admin），
+# 路由按业务域拆在 routers/（auth/appearance/assess/manage/board/awards/ai_admin/feedback），
 # 横切依赖在 common.py，算分在 scoring.py，证据归档在 evidence_zip.py，草稿存储在 drafts.py。
 
 import json
@@ -14,7 +14,7 @@ from fastapi.staticfiles import StaticFiles
 
 import db
 import drafts
-from routers import ai_admin, appearance, assess, auth, awards, board, manage
+from routers import ai_admin, appearance, assess, auth, awards, board, feedback, manage
 from scoring import parse_xlsx
 
 BASE_DIR = Path(__file__).resolve().parent
@@ -45,6 +45,7 @@ app.include_router(manage.router)
 app.include_router(board.router)
 app.include_router(awards.router)
 app.include_router(ai_admin.router)
+app.include_router(feedback.router)
 
 
 def _read_json_legacy(path):

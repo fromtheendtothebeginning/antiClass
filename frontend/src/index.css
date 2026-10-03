@@ -3269,6 +3269,142 @@ textarea.tf-input {
   font-size: 13px;
 }
 
+/* ---------- 体验反馈工单（公开看板 + 管理员勾选解决/回复） ---------- */
+.feedback-form {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-bottom: 22px;
+}
+
+.feedback-submit-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.feedback-submit-row .hint {
+  margin: 0;
+}
+
+/* 横排复位：.primary-btn 的 margin-top:14px 是纵向表单排版用的，进横排会坠得比旁边文字低（同 .ai-actions） */
+.feedback-submit-row .primary-btn {
+  margin-top: 0;
+  width: auto;
+}
+
+.feedback-list {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+/* 工单筛选：状态 × 分类 两组液态轨道并排（窄屏换行） */
+.feedback-filters {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-bottom: 14px;
+}
+
+.feedback-filter {
+  flex: 0 0 auto;
+}
+
+.feedback-item {
+  border: 1px solid var(--border-color);
+  border-radius: 16px;
+  padding: 14px 18px;
+  background: var(--bg-card);
+  background-image: linear-gradient(to bottom, rgba(255, 255, 255, 0.1), transparent 50%);
+  box-shadow: var(--shadow-sm);
+  backdrop-filter: blur(var(--glass-blur)) saturate(180%);
+  -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(180%);
+  transition: border-color 0.5s var(--ease-spring), opacity 0.5s var(--ease-spring);
+}
+
+.feedback-item.resolved {
+  opacity: 0.72;
+}
+
+.feedback-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.feedback-cat {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-secondary);
+}
+
+.feedback-time {
+  margin-left: auto;
+  font-size: 12px;
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+
+.feedback-content {
+  margin: 10px 0 6px;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.feedback-meta {
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.feedback-reply {
+  margin-top: 10px;
+  padding: 8px 12px;
+  border-radius: 10px;
+  background: var(--success-soft);
+  font-size: 13px;
+}
+
+.feedback-admin {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px dashed var(--border-color);
+  flex-wrap: wrap;
+}
+
+.feedback-resolve {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  cursor: pointer;
+  user-select: none;
+}
+
+.feedback-resolve input[type="checkbox"] {
+  width: 16px;
+  height: 16px;
+  accent-color: var(--accent-2);
+  cursor: pointer;
+}
+
+.feedback-reply-edit {
+  flex: 1 1 260px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.feedback-reply-actions {
+  display: flex;
+  gap: 8px;
+}
+
 /* ============================================
    移动端玻璃：模糊半径降到 30px（规范：移动端减负），阴影随 --shadow-* 自带缩放
    ============================================ */

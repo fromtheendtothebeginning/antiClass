@@ -36,7 +36,8 @@ function useActiveRect(ref, dep) {
  * 选项支持 {sep: true, label} 分隔项：渲染为轨道内的整行小标题（不参与滑块测量与
  * 拖动命中，只做视觉分组；侧栏 .nav-tabs 用它承载「统计界面/配置」组名）。
  * 支持按住拖动换挡，**二维跟手**：滑块横纵都跟随手指（手机端 Tab 换行成两行时，
- * 可以从第一行拖到第二行），松手落入指下选项并回弹落位。
+ * 可以从第一行拖到第二行）。松手**就近贴合**落位：指下选项优先；拖出轨道或越过
+ * 边缘（指下无选项）时贴到滑块中心最近的选项，不回弹原位。
  * 位移 ≥6px（任意方向）即接管；轨道 touch-action: none，触摸手势全归滑块、
  * 不再与页面滚动抢（页面滚动从 Tab 栏下方的内容区划）；触摸指针不做显式捕获
  * （部分手机内核会因此拦掉原生行为），靠触摸自带的隐式捕获接收后续事件，
@@ -64,9 +65,12 @@ export default function GlassTabs({ className = "", value, onChange, options, ar
       startY: e.clientY,
       startLeft: rect.left,
       startTop: rect.top,
+      left: rect.left,
+      top: rect.top,
       thumbW: rect.width,
       thumbH: rect.height,
       target: value,
+      hit: null, // 指下选项（拖出轨道后为 null，松手走就近贴合）
       items: buttons.map((b, i) => {
         const r = b.getBoundingClientRect();
         return {
@@ -108,6 +112,9 @@ export default function GlassTabs({ className = "", value, onChange, options, ar
       (it) => x >= it.left && x <= it.left + it.width && y >= it.top && y <= it.top + it.height
     );
     if (hit) d.target = hit.value;
+    d.hit = hit ? hit.value : null;
+    d.left = left;
+    d.top = top;
     setDrag({ left, top, width: d.thumbW, height: d.thumbH, target: d.target });
   };
 
@@ -118,7 +125,24 @@ export default function GlassTabs({ className = "", value, onChange, options, ar
     if (!d.moved) return; // 原地松手 = 普通点击，交给按钮自己的 onClick
     suppressClickRef.current = true; // 触摸隐式捕获下松手 click 会落在起点按钮上，吃掉防误切
     setDrag(null); // 恢复过渡，滑块 spring 回弹到落位选项
-    if (commit && d.target && d.target !== value) onChange(d.target);
+    if (!commit) return;
+    // 就近落位：指下选项优先；拖出轨道/越过边缘（指下无选项）时贴滑块中心最近的选项，不回弹原位
+    let final = d.hit || d.target || value;
+    if (!d.hit) {
+      const cx = d.left + d.thumbW / 2;
+      const cy = d.top + d.thumbH / 2;
+      let best = null;
+      let bestDist = Infinity;
+      for (const it of d.items) {
+        const dist = Math.hypot(cx - (it.left + it.width / 2), cy - (it.top + it.height / 2));
+        if (dist < bestDist) {
+          bestDist = dist;
+          best = it.value;
+        }
+      }
+      if (best) final = best;
+    }
+    if (final !== value) onChange(final);
   };
 
   const thumb = drag || rect;

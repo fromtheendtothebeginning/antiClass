@@ -446,3 +446,25 @@ export function submitAssess(sessionId, items, filesByIndex = {}) {
   });
   return request(`/assess/${sessionId}/submit`, { method: "POST", body: form });
 }
+
+// 体验反馈：GET 公开可见，POST 公开提交（限流在后端），update 需管理员 token
+export function listFeedback() {
+  return request("/feedback");
+}
+
+export function submitFeedback(payload) {
+  return request("/feedback", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload)
+  });
+}
+
+// payload: {resolved?, reply?} 部分更新（勾选与回复互不覆盖）
+export function updateFeedback(id, payload, token) {
+  return request(`/feedback/${id}/update`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+    body: JSON.stringify(payload)
+  });
+}

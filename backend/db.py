@@ -136,6 +136,16 @@ CREATE TABLE IF NOT EXISTS assess_sessions (
     created_at DATETIME NOT NULL,
     updated_at DATETIME NOT NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+CREATE TABLE IF NOT EXISTS feedback (
+    id CHAR(32) PRIMARY KEY,
+    category VARCHAR(8) NOT NULL DEFAULT '其他',
+    content TEXT NOT NULL,
+    contact VARCHAR(64) NOT NULL DEFAULT '',
+    reply VARCHAR(500) NOT NULL DEFAULT '',
+    resolved TINYINT(1) NOT NULL DEFAULT 0,
+    created_at DATETIME NOT NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 """
 
 
@@ -473,6 +483,41 @@ def assess_evict_beyond(limit):
         for i in ids:
             cur.execute("DELETE FROM assess_sessions WHERE id=%s", (i,))
     return ids
+
+
+# ---------- feedback（体验反馈工单：公开可读可提交，管理员勾选解决/回复） ----------
+
+def _row_feedback(row):
+    return {k: _plain(row[k]) for k in ("id", "category", "content", "contact", "reply", "resolved", "created_at")}
+
+
+def list_feedback():
+    """未解决在前（新→旧），已解决沉底。"""
+    with tx() as cur:
+        cur.execute("SELECT * FROM feedback ORDER BY resolved ASC, created_at DESC, id ASC")
+        return [_row_feedback(r) for r in cur.fetchall()]
+
+
+def get_feedback(fid):
+    with tx() as cur:
+        cur.execute("SELECT * FROM feedback WHERE id=%s", (fid,))
+        row = cur.fetchone()
+    return _row_feedback(row) if row else None
+
+
+def insert_feedback(fid, category, content, contact):
+    with tx() as cur:
+        cur.execute(
+            "INSERT INTO feedback (id,category,content,contact,created_at) VALUES (%s,%s,%s,%s,%s)",
+            (fid, category, content, contact, datetime.now()),
+        )
+
+
+def update_feedback(fid, fields):
+    """fields 的键只允许 resolved/reply（调用方白名单组装），传了才更新、互不覆盖。"""
+    sets = ", ".join(f"{k}=%s" for k in fields)
+    with tx() as cur:
+        cur.execute(f"UPDATE feedback SET {sets} WHERE id=%s", (*fields.values(), fid))
 
 
 # ---------- adjust_log ----------

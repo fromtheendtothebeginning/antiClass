@@ -16,6 +16,9 @@ export const CC_ROLES = [
 
 export const CC_ROLE_OPTIONS = CC_ROLES.map((r) => ({ value: r.role, label: `${r.role}（+${r.points}）` }));
 
+export const FEEDBACK_CATEGORIES = ["问题", "建议", "其他"];
+export const FEEDBACK_CATEGORY_OPTIONS = FEEDBACK_CATEGORIES.map((c) => ({ value: c, label: c }));
+
 export const BG_PATTERNS = [
   {
     id: "grid",
