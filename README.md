@@ -52,3 +52,6 @@ npm.cmd run build
 - 数据源：`Y3第二学期成绩导出.xlsx`（智育课程成绩）
 - 评分办法：`上海应用技术大学智能技术学部本科学生综合奖学金评定办法（试行稿）docx.pdf`
 - 运行状态持久化在 `backend/data/state.json`，删除后重启会从根目录 xlsx 重新初始化
+
+## 开源协议
+本项目代码以 [GPL-3.0](LICENSE)（GNU General Public License v3.0）发布。
