@@ -2,6 +2,7 @@
 import { useEffect, useRef, useState } from "react";
 import { evidenceUrl } from "../api.js";
 import { isImage } from "../utils/img.js";
+import { pinyinMatch } from "../utils/pinyin.js";
 
 export function useApproveFilters({ awards, classSel, tab }) {
   const [awardQuery, setAwardQuery] = useState("");
@@ -33,7 +34,8 @@ export function useApproveFilters({ awards, classSel, tab }) {
       }
     }
     const low = t.toLowerCase();
-    return (text) => (text || "").toLowerCase().includes(low);
+    // 字面包含之外再试拼音（全拼/首字母，wang、wzg 都能搜到王梓高）；匹配必须从汉字起拼，纯数字学号不会被误配
+    return (text) => (text || "").toLowerCase().includes(low) || pinyinMatch(text || "", low);
   };
   const awardMatchers = awardTokens.map(awardTokenMatcher);
   const filteredAwards = awards.filter((a) => {

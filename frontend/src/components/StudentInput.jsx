@@ -1,11 +1,13 @@
 import { useMemo, useState } from "react";
 import TextField from "./TextField.jsx";
+import { pinyinMatch } from "../utils/pinyin.js";
 
 /**
  * 学号选择输入框：玻璃风格自绘补全下拉，替代原生 datalist（原生候选框样式不受控、无法贴合全站风格）。
  * 交互对齐审批搜索框（award-suggest）：↑↓ 循环高亮 / 回车选中 / Esc 关闭、悬停即高亮、
  * 失焦收起（候选项 onMouseDown 阻止默认，避免输入框先失焦把列表收掉）。
- * 过滤规则：学号或姓名包含输入片段即命中；空输入显示前 10 个学生。onChange 回传选中的学号字符串。
+ * 过滤规则：学号或姓名包含输入片段、或姓名拼音（全拼/首字母）命中即通过；空输入显示前 10 个学生。
+ * onChange 回传选中的学号字符串。
  */
 export default function StudentInput({ value, onChange, students, ...rest }) {
   const [open, setOpen] = useState(false);
@@ -16,7 +18,10 @@ export default function StudentInput({ value, onChange, students, ...rest }) {
     const pool = (students || []).filter((s) => s.sid);
     const hit = token
       ? pool.filter(
-          (s) => s.sid.toLowerCase().includes(token) || (s.name || "").toLowerCase().includes(token)
+          (s) =>
+            s.sid.toLowerCase().includes(token) ||
+            (s.name || "").toLowerCase().includes(token) ||
+            pinyinMatch(s.name || "", token)
         )
       : pool;
     return hit.slice(0, 10);

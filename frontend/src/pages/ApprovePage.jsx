@@ -36,7 +36,7 @@ export default function ApprovePage({filters, awards, awardsLoading, token, role
               <div className="award-search">
                 <input
                   className="filter-input"
-                  placeholder="学号 / 姓名（空格分隔模糊搜索，/正则/ 按正则匹配）"
+                  placeholder="学号 / 姓名（支持拼音，空格分隔模糊搜索，/正则/ 按正则匹配）"
                   value={awardQuery}
                   autoComplete="off"
                   onChange={(e) => { setAwardQuery(e.target.value); setAwardSuggestIdx(-1); }}
