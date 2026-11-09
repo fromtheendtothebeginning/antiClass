@@ -337,7 +337,7 @@ export default function App() {
       <div className="bg-grid" />
       <header className="topbar">
         <div className="brand">
-          <img className="brand-logo" src="/logo.png?v=3" alt="anticlass logo" />
+          <img className="brand-logo" src="/logo.png?v=4" alt="anticlass logo" />
           <div className="brand-text">
             <h1>anticlass</h1>
             {/* 未选班级时副标题整行不显示（榜单按班展示，没选班也没有数据来源可写） */}

@@ -15,22 +15,6 @@
       <stop offset="0.35" stop-color="#FFFFFF" stop-opacity="0.06"/>
       <stop offset="1" stop-color="#FFFFFF" stop-opacity="0"/>
     </linearGradient>
-    <linearGradient id="gold" x1="0.15" y1="0" x2="0.55" y2="1">
-      <stop offset="0" stop-color="#FDF3D8"/>
-      <stop offset="0.3" stop-color="#F4D695"/>
-      <stop offset="0.62" stop-color="#E5B963"/>
-      <stop offset="0.85" stop-color="#D5A24B"/>
-      <stop offset="1" stop-color="#BE8735"/>
-    </linearGradient>
-    <linearGradient id="facetLight" x1="0" y1="0" x2="0.55" y2="0.8">
-      <stop offset="0" stop-color="#FFFFFF" stop-opacity="0.20"/>
-      <stop offset="0.55" stop-color="#FFFFFF" stop-opacity="0.03"/>
-      <stop offset="1" stop-color="#FFFFFF" stop-opacity="0"/>
-    </linearGradient>
-    <linearGradient id="facetShade" x1="0.2" y1="0.2" x2="1" y2="1">
-      <stop offset="0.35" stop-color="#7A4E12" stop-opacity="0"/>
-      <stop offset="1" stop-color="#7A4E12" stop-opacity="0.16"/>
-    </linearGradient>
     <linearGradient id="goldSmall" x1="0" y1="0" x2="0" y2="1">
       <stop offset="0" stop-color="#FFF6DE"/>
       <stop offset="0.45" stop-color="#F0CE86"/>
@@ -41,11 +25,11 @@
       <stop offset="0.55" stop-color="#E4B863" stop-opacity="0.07"/>
       <stop offset="1" stop-color="#E4B863" stop-opacity="0"/>
     </radialGradient>
+    <filter id="pshadow" x="-30%" y="-30%" width="160%" height="170%">
+      <feDropShadow dx="0" dy="10" stdDeviation="12" flood-color="#050B18" flood-opacity="0.4"/>
+    </filter>
     <clipPath id="tile">
       <rect x="8" y="8" width="496" height="496" rx="116"/>
-    </clipPath>
-    <clipPath id="starClip">
-      <path d="M248 142 Q276 256 390 284 Q276 312 248 426 Q220 312 106 284 Q220 256 248 142 Z"/>
     </clipPath>
   </defs>
 
@@ -61,19 +45,37 @@
     </g>
   </g>
 
-  <circle cx="248" cy="284" r="186" fill="url(#glow)"/>
+  <circle cx="256" cy="290" r="192" fill="url(#glow)"/>
 
-  <g>
-    <path d="M248 142 Q276 256 390 284 Q276 312 248 426 Q220 312 106 284 Q220 256 248 142 Z"
-          fill="url(#gold)" stroke="#FFE9B8" stroke-opacity="0.5" stroke-width="2.5"/>
-    <g clip-path="url(#starClip)">
-      <rect x="80" y="120" width="340" height="330" fill="url(#facetLight)"/>
-      <rect x="80" y="120" width="340" height="330" fill="url(#facetShade)"/>
-      <path d="M248 142 Q276 256 390 284 L248 284 Z" fill="#FFFFFF" fill-opacity="0.10"/>
-      <path d="M248 284 L390 284 Q276 312 248 426 Z" fill="#8A5A18" fill-opacity="0.10"/>
+  <g filter="url(#pshadow)">
+    <!-- faceted pentagon radar: brand mark, now in champagne gold -->
+    <path d="M256 140 L396.7 242.2 L343.1 407.9 L168.9 407.9 L115.3 242.2 Z" fill="#E8BE6E"/>
+    <path d="M256 288 L256 140 L396.7 242.2 Z" fill="#F8E0A8" fill-opacity="0.95"/>
+    <path d="M256 288 L396.7 242.2 L343.1 407.9 Z" fill="#E9BE6C" fill-opacity="0.92"/>
+    <path d="M256 288 L343.1 407.9 L168.9 407.9 Z" fill="#D6A050" fill-opacity="0.9"/>
+    <path d="M256 288 L168.9 407.9 L115.3 242.2 Z" fill="#DEAC59" fill-opacity="0.92"/>
+    <path d="M256 288 L115.3 242.2 L256 140 Z" fill="#F1CE87" fill-opacity="0.95"/>
+
+    <!-- radar rings + spokes -->
+    <g fill="none" stroke="#1A2740" stroke-linecap="round">
+      <path d="M256 140 L396.7 242.2 L343.1 407.9 L168.9 407.9 L115.3 242.2 Z" stroke-opacity="0.30" stroke-width="4"/>
+      <path d="M256 191.6 L350.9 260.7 L314.8 372.9 L197.2 372.9 L161.1 260.7 Z" stroke-opacity="0.18" stroke-width="3"/>
+      <path d="M256 243.2 L305.1 279.2 L286.5 337.9 L225.5 337.9 L206.9 279.2 Z" stroke-opacity="0.12" stroke-width="2.5"/>
+      <path d="M256 288 L256 230 M256 288 L313.4 244.2 M256 288 L290.6 356.2 M256 288 L221.4 356.2 M256 288 L198.6 244.2" stroke-opacity="0.16" stroke-width="3"/>
     </g>
+
+    <!-- vertices -->
+    <g fill="#FBEDC6" stroke="#B8812E" stroke-opacity="0.25" stroke-width="1.5">
+      <circle cx="256" cy="140" r="8"/>
+      <circle cx="396.7" cy="242.2" r="8"/>
+      <circle cx="343.1" cy="407.9" r="8"/>
+      <circle cx="168.9" cy="407.9" r="8"/>
+      <circle cx="115.3" cy="242.2" r="8"/>
+    </g>
+    <path d="M256 140 L396.7 242.2 L343.1 407.9 L168.9 407.9 L115.3 242.2 Z" fill="none" stroke="#FFEBC0" stroke-opacity="0.5" stroke-width="2.5"/>
   </g>
 
+  <!-- companion sparkle from the reference -->
   <path d="M404 58 Q410 92 442 98 Q410 104 404 138 Q398 104 366 98 Q398 92 404 58 Z"
         fill="url(#goldSmall)" stroke="#FFF1CE" stroke-opacity="0.55" stroke-width="2"/>
   <path d="M404 58 Q410 92 442 98 Q410 92 404 98 Q398 92 366 98 Q398 92 404 58 Z"
