@@ -1,0 +1,83 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#334A70"/>
+      <stop offset="0.45" stop-color="#243653"/>
+      <stop offset="1" stop-color="#141F33"/>
+    </linearGradient>
+    <radialGradient id="sheen" cx="0.18" cy="0.1" r="0.9">
+      <stop offset="0" stop-color="#9DB7DC" stop-opacity="0.28"/>
+      <stop offset="0.55" stop-color="#9DB7DC" stop-opacity="0.04"/>
+      <stop offset="1" stop-color="#9DB7DC" stop-opacity="0"/>
+    </radialGradient>
+    <linearGradient id="rim" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#FFFFFF" stop-opacity="0.34"/>
+      <stop offset="0.35" stop-color="#FFFFFF" stop-opacity="0.06"/>
+      <stop offset="1" stop-color="#FFFFFF" stop-opacity="0"/>
+    </linearGradient>
+    <linearGradient id="gold" x1="0.15" y1="0" x2="0.55" y2="1">
+      <stop offset="0" stop-color="#FDF3D8"/>
+      <stop offset="0.3" stop-color="#F4D695"/>
+      <stop offset="0.62" stop-color="#E5B963"/>
+      <stop offset="0.85" stop-color="#D5A24B"/>
+      <stop offset="1" stop-color="#BE8735"/>
+    </linearGradient>
+    <linearGradient id="facetLight" x1="0" y1="0" x2="0.55" y2="0.8">
+      <stop offset="0" stop-color="#FFFFFF" stop-opacity="0.20"/>
+      <stop offset="0.55" stop-color="#FFFFFF" stop-opacity="0.03"/>
+      <stop offset="1" stop-color="#FFFFFF" stop-opacity="0"/>
+    </linearGradient>
+    <linearGradient id="facetShade" x1="0.2" y1="0.2" x2="1" y2="1">
+      <stop offset="0.35" stop-color="#7A4E12" stop-opacity="0"/>
+      <stop offset="1" stop-color="#7A4E12" stop-opacity="0.16"/>
+    </linearGradient>
+    <linearGradient id="goldSmall" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#FFF6DE"/>
+      <stop offset="0.45" stop-color="#F0CE86"/>
+      <stop offset="1" stop-color="#D3A14C"/>
+    </linearGradient>
+    <radialGradient id="glow" cx="0.5" cy="0.5" r="0.5">
+      <stop offset="0" stop-color="#E4B863" stop-opacity="0.2"/>
+      <stop offset="0.55" stop-color="#E4B863" stop-opacity="0.07"/>
+      <stop offset="1" stop-color="#E4B863" stop-opacity="0"/>
+    </radialGradient>
+    <clipPath id="tile">
+      <rect x="8" y="8" width="496" height="496" rx="116"/>
+    </clipPath>
+    <clipPath id="starClip">
+      <path d="M248 142 Q276 256 390 284 Q276 312 248 426 Q220 312 106 284 Q220 256 248 142 Z"/>
+    </clipPath>
+  </defs>
+
+  <rect x="8" y="8" width="496" height="496" rx="116" fill="url(#bg)"/>
+  <g clip-path="url(#tile)">
+    <rect x="8" y="8" width="496" height="496" fill="url(#sheen)"/>
+    <g stroke="#A8C2E6" stroke-opacity="0.10" stroke-width="1">
+      <path d="M40 8V504 M72 8V504 M104 8V504 M136 8V504 M168 8V504 M200 8V504 M232 8V504 M264 8V504 M296 8V504 M328 8V504 M360 8V504 M392 8V504 M424 8V504 M456 8V504 M488 8V504
+               M8 40H504 M8 72H504 M8 104H504 M8 136H504 M8 168H504 M8 200H504 M8 232H504 M8 264H504 M8 296H504 M8 328H504 M8 360H504 M8 392H504 M8 424H504 M8 456H504 M8 488H504"/>
+    </g>
+    <g stroke="#A8C2E6" stroke-opacity="0.05" stroke-width="1">
+      <path d="M136 8V504 M264 8V504 M392 8V504 M8 136H504 M8 264H504 M8 392H504"/>
+    </g>
+  </g>
+
+  <circle cx="248" cy="284" r="186" fill="url(#glow)"/>
+
+  <g>
+    <path d="M248 142 Q276 256 390 284 Q276 312 248 426 Q220 312 106 284 Q220 256 248 142 Z"
+          fill="url(#gold)" stroke="#FFE9B8" stroke-opacity="0.5" stroke-width="2.5"/>
+    <g clip-path="url(#starClip)">
+      <rect x="80" y="120" width="340" height="330" fill="url(#facetLight)"/>
+      <rect x="80" y="120" width="340" height="330" fill="url(#facetShade)"/>
+      <path d="M248 142 Q276 256 390 284 L248 284 Z" fill="#FFFFFF" fill-opacity="0.10"/>
+      <path d="M248 284 L390 284 Q276 312 248 426 Z" fill="#8A5A18" fill-opacity="0.10"/>
+    </g>
+  </g>
+
+  <path d="M404 58 Q410 92 442 98 Q410 104 404 138 Q398 104 366 98 Q398 92 404 58 Z"
+        fill="url(#goldSmall)" stroke="#FFF1CE" stroke-opacity="0.55" stroke-width="2"/>
+  <path d="M404 58 Q410 92 442 98 Q410 92 404 98 Q398 92 366 98 Q398 92 404 58 Z"
+        fill="#FFFFFF" fill-opacity="0.14"/>
+
+  <rect x="9" y="9" width="494" height="494" rx="115" fill="none" stroke="url(#rim)" stroke-width="2"/>
+</svg>
