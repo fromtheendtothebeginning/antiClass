@@ -320,8 +320,8 @@ button {
   flex: none;
   width: 34px;
   height: 34px;
-  border-radius: 10px;
-  box-shadow: 0 2px 8px rgba(3, 7, 18, 0.18), inset 0 1px 0 rgba(255, 255, 255, 0.35);
+  /* 圆形透明图标：用 drop-shadow 跟随 alpha，box-shadow 会露出方形底 */
+  filter: drop-shadow(0 2px 4px rgba(3, 7, 18, 0.24));
 }
 
 .brand-text {
@@ -2094,7 +2094,6 @@ button {
   .brand-logo {
     width: 30px;
     height: 30px;
-    border-radius: 9px;
   }
 
   .award-body {
