@@ -337,13 +337,16 @@ export default function App() {
       <div className="bg-grid" />
       <header className="topbar">
         <div className="brand">
-          <h1>anticlass</h1>
-          {/* 未选班级时副标题整行不显示（榜单按班展示，没选班也没有数据来源可写） */}
-          {classSel && (
-            <span className="meta">
-              {meta.source ? `数据来源：${meta.source}` : "暂无数据"} · 共 {meta.rows ?? 0} 条课程记录 · {students.length} 名学生
-            </span>
-          )}
+          <img className="brand-logo" src="/logo.png" alt="anticlass logo" />
+          <div className="brand-text">
+            <h1>anticlass</h1>
+            {/* 未选班级时副标题整行不显示（榜单按班展示，没选班也没有数据来源可写） */}
+            {classSel && (
+              <span className="meta">
+                {meta.source ? `数据来源：${meta.source}` : "暂无数据"} · 共 {meta.rows ?? 0} 条课程记录 · {students.length} 名学生
+              </span>
+            )}
+          </div>
         </div>
         <div className="actions">
           <ThemeToggle />
