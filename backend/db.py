@@ -42,6 +42,7 @@ DB_NAME = os.environ.get("MYSQL_DB", "scholarship")
 STUDENT_FIELDS = ("sid", "name", "class_id", "course_count", "credits", "gpa", "deyu", "score", "tiyu", "meiyu", "laoyu", "fujia", "failed", "total")
 AWARD_FIELDS = ("id", "sid", "name", "class_id", "category", "points", "basis", "evidence", "folder", "approved", "reject_reason", "created_at")
 ADMIN_FIELDS = ("username", "role", "class_id", "created_at", "nickname")
+FUND_FIELDS = ("id", "class_id", "kind", "amount", "title", "created_by", "created_at")
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS students (
@@ -145,6 +146,17 @@ CREATE TABLE IF NOT EXISTS feedback (
     reply VARCHAR(500) NOT NULL DEFAULT '',
     resolved TINYINT(1) NOT NULL DEFAULT 0,
     created_at DATETIME NOT NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+CREATE TABLE IF NOT EXISTS funds (
+    id CHAR(32) PRIMARY KEY,
+    class_id CHAR(32) NOT NULL DEFAULT '',
+    kind VARCHAR(8) NOT NULL DEFAULT 'in',
+    amount DECIMAL(12,2) NOT NULL DEFAULT 0,
+    title VARCHAR(200) NOT NULL DEFAULT '',
+    created_by VARCHAR(32) NOT NULL DEFAULT '',
+    created_at DATETIME(6) NOT NULL,
+    INDEX idx_funds_class (class_id, created_at)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 """
 
@@ -520,6 +532,41 @@ def update_feedback(fid, fields):
         cur.execute(f"UPDATE feedback SET {sets} WHERE id=%s", (*fields.values(), fid))
 
 
+# ---------- funds（班费公示：管理员发布收支记录，所有人可查看；结余允许为负） ----------
+
+def _row_fund(row):
+    return {k: _plain(row[k]) for k in FUND_FIELDS}
+
+
+def list_funds(class_id):
+    with tx() as cur:
+        cur.execute(
+            "SELECT * FROM funds WHERE class_id=%s ORDER BY created_at DESC, id DESC",
+            (class_id,),
+        )
+        return [_row_fund(r) for r in cur.fetchall()]
+
+
+def get_fund(fid):
+    with tx() as cur:
+        cur.execute("SELECT * FROM funds WHERE id=%s", (fid,))
+        row = cur.fetchone()
+    return _row_fund(row) if row else None
+
+
+def insert_fund(fid, class_id, kind, amount, title, created_by):
+    with tx() as cur:
+        cur.execute(
+            "INSERT INTO funds (id,class_id,kind,amount,title,created_by,created_at) VALUES (%s,%s,%s,%s,%s,%s,%s)",
+            (fid, class_id, kind, round(float(amount), 2), title, created_by, datetime.now()),
+        )
+
+
+def delete_fund(fid):
+    with tx() as cur:
+        cur.execute("DELETE FROM funds WHERE id=%s", (fid,))
+
+
 # ---------- adjust_log ----------
 
 def insert_adjust_log(entries):
@@ -673,6 +720,7 @@ def clear_class_data(cid):
         folders = [r["folder"] for r in cur.fetchall()]
         cur.execute("DELETE FROM awards WHERE class_id=%s", (cid,))
         cur.execute("DELETE FROM students WHERE class_id=%s", (cid,))
+        cur.execute("DELETE FROM funds WHERE class_id=%s", (cid,))
     return folders
 
 

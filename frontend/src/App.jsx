@@ -29,6 +29,7 @@ import { useAppearanceAdmin } from "./hooks/useAppearanceAdmin.js";
 import { useLandingAdmin } from "./hooks/useLandingAdmin.js";
 import { useProfile } from "./hooks/useProfile.js";
 import { useFeedback } from "./hooks/useFeedback.js";
+import { useFunds } from "./hooks/useFunds.js";
 import PassPage from "./pages/PassPage.jsx";
 import BoardPage from "./pages/BoardPage.jsx";
 import ApplyPage from "./pages/ApplyPage.jsx";
@@ -40,6 +41,7 @@ import AppearancePage from "./pages/AppearancePage.jsx";
 import LandingPage from "./pages/LandingPage.jsx";
 import ProfilePage from "./pages/ProfilePage.jsx";
 import FeedbackPage from "./pages/FeedbackPage.jsx";
+import FundsPage from "./pages/FundsPage.jsx";
 
 const TOKEN_KEY = "token";
 const ROLE_KEY = "role";
@@ -106,6 +108,7 @@ export default function App() {
   const landing = useLandingAdmin({ token, landingTab, setLandingTab, landingPick, setLandingPick });
   const profileForm = useProfile({ token, profile, setProfile, nickInput, setNickInput, avatarPreview, setAvatarPreview });
   const feedback = useFeedback({ token, tab, setError });
+  const funds = useFunds({ token, tab, classSel, setError });
 
   async function loadBoard(cid) {
     // 榜单按班级展示：未选班级一律不发请求，避免拿到后端跨班合并的榜单
@@ -274,7 +277,7 @@ export default function App() {
     setAccount("");
     setProfile({ nickname: "", avatar: "" });
     // 退出后成为访客：回到配置的「开始界面」（未配置则只显示侧边栏）
-    setTab((t) => (PUBLIC_TABS.includes(t) || t === "feedback" ? t : landingTab)); // 登录态专属界面（数据管理/配置）随之退出；体验反馈公开保留
+    setTab((t) => (PUBLIC_TABS.includes(t) || t === "feedback" || t === "fund" ? t : landingTab)); // 登录态专属界面（数据管理/配置）随之退出；体验反馈、班费公开保留
     schTabRef.current = "board"; // 防止记住的子页面是登录态专属（如数据管理），点「奖学金评定」落空
     setLoginNotice(msg || "登录已过期，请重新登录");
     setLoginOpen(true);
@@ -290,7 +293,7 @@ export default function App() {
     setMyClassId("");
     setAccount("");
     setProfile({ nickname: "", avatar: "" });
-    setTab((t) => (PUBLIC_TABS.includes(t) || t === "feedback" ? t : landingTab));
+    setTab((t) => (PUBLIC_TABS.includes(t) || t === "feedback" || t === "fund" ? t : landingTab));
     schTabRef.current = "board";
     setLoginNotice("");
   }
@@ -383,6 +386,7 @@ export default function App() {
             options={[
               { sep: true, label: "统计界面" },
               { value: "sch", label: "奖学金评定" },
+              { value: "fund", label: "班费" },
               // 配置组仅登录后显示（页面分支同样有 token/role 守卫，访客点了右侧只会空白）
               ...(token
                 ? [
@@ -525,6 +529,19 @@ export default function App() {
             )}
             {tab === "cfg_model" && token && role === "root" && <ModelConfigPage ai={ai} />}
             {tab === "feedback" && <FeedbackPage feedback={feedback} token={token} />}
+            {tab === "fund" && (
+              <FundsPage
+                funds={funds}
+                token={token}
+                role={role}
+                myClassId={myClassId}
+                classes={classes}
+                classSel={classSel}
+                handlePickClass={handlePickClass}
+                guideClass={guideClass}
+                setGuideClass={setGuideClass}
+              />
+            )}
           </main>
         </div>
       </div>

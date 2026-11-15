@@ -468,3 +468,24 @@ export function updateFeedback(id, payload, token) {
     body: JSON.stringify(payload)
   });
 }
+
+// 班费公示：GET 公开（按班），发布/删除需管理员 token
+export function listFunds(classId) {
+  return request(`/funds${classId ? `?class_id=${encodeURIComponent(classId)}` : ""}`);
+}
+
+// payload: {class_id, kind: "in"|"out", amount, title}
+export function createFund(payload, token) {
+  return request("/funds", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+    body: JSON.stringify(payload)
+  });
+}
+
+export function deleteFund(id, token) {
+  return request(`/funds/${id}/delete`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${token}` }
+  });
+}

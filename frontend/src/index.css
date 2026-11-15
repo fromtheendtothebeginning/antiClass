@@ -3429,6 +3429,159 @@ textarea.tf-input {
   gap: 8px;
 }
 
+/* ---------- 班费公示（公开查看 + 管理员发布收支记录） ---------- */
+.fund-summary {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+  margin: 16px 0 20px;
+}
+
+.fund-stat {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+  padding: 14px 18px;
+  border: 1px solid var(--border-color);
+  border-radius: 16px;
+  background: var(--bg-card);
+  background-image: linear-gradient(to bottom, rgba(255, 255, 255, 0.1), transparent 50%);
+  box-shadow: var(--shadow-sm);
+  backdrop-filter: blur(var(--glass-blur)) saturate(180%);
+  -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(180%);
+}
+
+.fund-stat span {
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.fund-stat strong {
+  font-size: 24px;
+  font-variant-numeric: tabular-nums;
+  overflow-wrap: anywhere;
+}
+
+.fund-stat.in strong,
+.fund-amount.in {
+  color: var(--success);
+}
+
+.fund-stat.out strong,
+.fund-stat.negative strong,
+.fund-amount.out {
+  color: var(--danger);
+}
+
+.fund-form {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin-bottom: 20px;
+}
+
+.fund-kind {
+  flex: 0 0 auto;
+}
+
+.fund-form .tf-input {
+  flex: 1 1 160px;
+  width: auto;
+}
+
+.fund-form .tf-input[type="number"] {
+  flex: 0 0 130px;
+}
+
+/* 横排复位：.primary-btn 的 margin-top:14px 是纵向表单用的（同 .feedback-submit-row） */
+.fund-form .primary-btn {
+  margin-top: 0;
+  width: auto;
+}
+
+.fund-msg {
+  margin: 0;
+}
+
+.fund-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.fund-item {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 14px 18px;
+  border: 1px solid var(--border-color);
+  border-radius: 16px;
+  background: var(--bg-card);
+  background-image: linear-gradient(to bottom, rgba(255, 255, 255, 0.1), transparent 50%);
+  box-shadow: var(--shadow-sm);
+  backdrop-filter: blur(var(--glass-blur)) saturate(180%);
+  -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(180%);
+}
+
+.fund-main {
+  flex: 1;
+  min-width: 0;
+}
+
+.fund-title {
+  margin: 0;
+  font-weight: 600;
+  word-break: break-word;
+}
+
+.fund-meta {
+  margin-top: 4px;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.fund-amount {
+  font-size: 18px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+@media (max-width: 768px) {
+  /* 手机端：结余单独占一行，增加/减少并排；金额自动换行不撑破卡片 */
+  .fund-summary {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 8px;
+  }
+
+  .fund-stat:first-child {
+    grid-column: 1 / -1;
+  }
+
+  .fund-stat {
+    padding: 12px 14px;
+  }
+
+  .fund-stat strong {
+    font-size: 20px;
+  }
+
+  .fund-form .tf-input {
+    flex: 1 1 100%;
+  }
+
+  .fund-form .tf-input[type="number"] {
+    flex: 1 1 120px;
+  }
+
+  .fund-item {
+    flex-wrap: wrap;
+    gap: 8px 12px;
+    padding: 12px 14px;
+  }
+}
+
 /* ============================================
    移动端玻璃：模糊半径降到 30px（规范：移动端减负），阴影随 --shadow-* 自带缩放
    ============================================ */
