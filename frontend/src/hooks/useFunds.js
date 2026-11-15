@@ -17,6 +17,7 @@ export function useFunds({ token, tab, classSel, setError }) {
   const [fundFiles, setFundFiles] = useState([]); // 票据图片（最多 5 张）
   const [fundPreview, setFundPreview] = useState(null); // {url,title} 图片预览弹窗
   const [deletingId, setDeletingId] = useState(null);
+  const [deleteTarget, setDeleteTarget] = useState(null); // 待确认删除的记录（走主题弹窗，不用原生 confirm）
   const seq = useRef(0); // 快速切班时丢弃先发后到的旧响应
 
   async function loadFunds(cid = classSel, opts = {}) {
@@ -100,12 +101,22 @@ export function useFunds({ token, tab, classSel, setError }) {
     setFundPreview(null);
   }
 
-  async function handleDeleteFund(item) {
-    if (!window.confirm(`确定删除「${item.title}」这条记录吗？`)) return;
+  function requestDeleteFund(item) {
+    setDeleteTarget(item);
+  }
+
+  function cancelDeleteFund() {
+    if (!deletingId) setDeleteTarget(null);
+  }
+
+  async function confirmDeleteFund() {
+    const item = deleteTarget;
+    if (!item || deletingId) return;
     setDeletingId(item.id);
     setError("");
     try {
       await deleteFund(item.id, token);
+      setDeleteTarget(null);
       await loadFunds(classSel, { loading: false });
     } catch (err) {
       setError(err.message);
@@ -120,6 +131,6 @@ export function useFunds({ token, tab, classSel, setError }) {
     fundBusy, fundMsg, handleAddFund,
     fundFiles, addFundFiles, removeFundFile,
     fundPreview, openFundPreview, closeFundPreview,
-    deletingId, handleDeleteFund
+    deletingId, deleteTarget, requestDeleteFund, cancelDeleteFund, confirmDeleteFund
   };
 }

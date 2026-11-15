@@ -181,7 +181,7 @@ export default function FundsPage({ funds, token, role, myClassId, classes, clas
                     type="button"
                     className="btn small ghost"
                     disabled={funds.deletingId === it.id}
-                    onClick={() => funds.handleDeleteFund(it)}
+                    onClick={() => funds.requestDeleteFund(it)}
                   >
                     删除
                   </button>
@@ -191,6 +191,26 @@ export default function FundsPage({ funds, token, role, myClassId, classes, clas
           })}
         </div>
       )}
+
+      <Modal
+        open={!!funds.deleteTarget}
+        title="删除班费记录"
+        danger
+        confirmText={funds.deletingId ? "删除中…" : "删除"}
+        confirmDisabled={!!funds.deletingId}
+        onConfirm={funds.confirmDeleteFund}
+        onCancel={funds.cancelDeleteFund}
+      >
+        <p className="hint">
+          确定删除「{funds.deleteTarget?.title}」吗？金额 {funds.deleteTarget?.kind === "in" ? "+" : "-"}¥
+          {money(funds.deleteTarget?.amount)}。
+        </p>
+        {funds.deleteTarget?.evidence?.length > 0 && (
+          <p className="hint">
+            该记录附带的 {funds.deleteTarget.evidence.length} 张票据图片会一并删除，且不可恢复。
+          </p>
+        )}
+      </Modal>
 
       <Modal
         open={!!funds.fundPreview}
