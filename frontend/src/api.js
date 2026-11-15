@@ -474,13 +474,23 @@ export function listFunds(classId) {
   return request(`/funds${classId ? `?class_id=${encodeURIComponent(classId)}` : ""}`);
 }
 
-// payload: {class_id, kind: "in"|"out", amount, title}
+// payload: {class_id, kind: "in"|"out", amount, title, files?: File[]}
 export function createFund(payload, token) {
+  const form = new FormData();
+  form.append("class_id", payload.class_id);
+  form.append("kind", payload.kind);
+  form.append("amount", String(payload.amount));
+  form.append("title", payload.title);
+  (payload.files || []).forEach((f) => form.append("files", f));
   return request("/funds", {
     method: "POST",
-    headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
-    body: JSON.stringify(payload)
+    headers: { Authorization: `Bearer ${token}` },
+    body: form
   });
+}
+
+export function fundImageUrl(id, filename) {
+  return `/api/funds/${id}/image/${encodeURIComponent(filename)}`;
 }
 
 export function deleteFund(id, token) {

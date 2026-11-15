@@ -1,7 +1,11 @@
 // pages/FundsPage.jsx — 纯展示组件：班费公示（公开可看，管理员发布增加/减少记录）
 import Dropdown from "../components/Dropdown.jsx";
+import DropZone from "../components/DropZone.jsx";
+import FileChips from "../components/FileChips.jsx";
 import GlassTabs from "../components/GlassTabs.jsx";
+import Modal from "../components/Modal.jsx";
 import TextField from "../components/TextField.jsx";
+import { fundImageUrl } from "../api.js";
 
 const KIND_OPTIONS = [
   { value: "in", label: "增加" },
@@ -91,32 +95,48 @@ export default function FundsPage({ funds, token, role, myClassId, classes, clas
 
       {canPublish && (
         <form className="fund-form" onSubmit={funds.handleAddFund}>
-          <GlassTabs
-            className="fund-kind"
-            ariaLabel="班费类型"
-            value={funds.fundKind}
-            onChange={funds.setFundKind}
-            options={KIND_OPTIONS}
-          />
-          <TextField
-            type="number"
-            inputMode="decimal"
-            min="0.01"
-            step="0.01"
-            placeholder="金额（元）"
-            value={funds.fundAmount}
-            onChange={(e) => funds.setFundAmount(e.target.value)}
-          />
-          <TextField
-            placeholder="事由（如：班服采购、班费收缴）"
-            maxLength={200}
-            value={funds.fundTitle}
-            onChange={(e) => funds.setFundTitle(e.target.value)}
-          />
-          <button className="btn primary-btn" disabled={funds.fundBusy}>
-            {funds.fundBusy ? "发布中…" : "发布记录"}
-          </button>
-          {funds.fundMsg && <span className="hint fund-msg">{funds.fundMsg}</span>}
+          <div className="fund-form-row">
+            <GlassTabs
+              className="fund-kind"
+              ariaLabel="班费类型"
+              value={funds.fundKind}
+              onChange={funds.setFundKind}
+              options={KIND_OPTIONS}
+            />
+            <TextField
+              type="number"
+              inputMode="decimal"
+              min="0.01"
+              step="0.01"
+              placeholder="金额（元）"
+              value={funds.fundAmount}
+              onChange={(e) => funds.setFundAmount(e.target.value)}
+            />
+            <TextField
+              placeholder="事由（如：班服采购、班费收缴）"
+              maxLength={200}
+              value={funds.fundTitle}
+              onChange={(e) => funds.setFundTitle(e.target.value)}
+            />
+            <button className="btn primary-btn" disabled={funds.fundBusy}>
+              {funds.fundBusy ? "发布中…" : "发布记录"}
+            </button>
+            {funds.fundMsg && <span className="hint fund-msg">{funds.fundMsg}</span>}
+          </div>
+          <div className="fund-upload-row">
+            <DropZone
+              className="slim fund-upload"
+              accept="image/*"
+              multiple
+              title="添加票据图片（最多 5 张）"
+              onFiles={funds.addFundFiles}
+            />
+            <FileChips
+              files={funds.fundFiles}
+              onRemove={funds.removeFundFile}
+              className="fund-files"
+            />
+          </div>
         </form>
       )}
 
@@ -137,6 +157,21 @@ export default function FundsPage({ funds, token, role, myClassId, classes, clas
                     {fmtTime(it.created_at)}
                     {it.created_by ? ` · 发布人 ${it.created_by}` : ""}
                   </div>
+                  {it.evidence?.length > 0 && (
+                    <div className="fund-thumbs">
+                      {it.evidence.map((file) => (
+                        <button
+                          key={file}
+                          type="button"
+                          className="fund-thumb"
+                          title={file}
+                          onClick={() => funds.openFundPreview(it, file)}
+                        >
+                          <img src={fundImageUrl(it.id, file)} alt={file} loading="lazy" />
+                        </button>
+                      ))}
+                    </div>
+                  )}
                 </div>
                 <strong className={`fund-amount ${isIn ? "in" : "out"}`}>
                   {isIn ? "+" : "-"}¥{money(it.amount)}
@@ -156,6 +191,18 @@ export default function FundsPage({ funds, token, role, myClassId, classes, clas
           })}
         </div>
       )}
+
+      <Modal
+        open={!!funds.fundPreview}
+        title={funds.fundPreview?.title || "图片预览"}
+        showConfirm={false}
+        cancelText="关闭"
+        onCancel={funds.closeFundPreview}
+      >
+        {funds.fundPreview && (
+          <img className="img-preview" src={funds.fundPreview.url} alt={funds.fundPreview.title} />
+        )}
+      </Modal>
     </div>
   );
 }

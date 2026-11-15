@@ -84,11 +84,13 @@ def clear_class(cid: str, authorization: str = Header(default="")):
     cls = db.get_class(cid)
     if not cls:
         raise HTTPException(status_code=404, detail="班级不存在")
-    folders = db.clear_class_data(cid)
+    folders, fund_ids = db.clear_class_data(cid)
     db.set_class_meta(cid, 0, "")
     for folder in folders:
         if folder and not db.folder_in_use(folder):
             shutil.rmtree(UPLOADS_DIR / folder, ignore_errors=True)
+    for fid in fund_ids:
+        shutil.rmtree(UPLOADS_DIR / "funds" / fid, ignore_errors=True)
     return {"ok": True, "class": cls["name"]}
 
 

@@ -3476,10 +3476,16 @@ textarea.tf-input {
 
 .fund-form {
   display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-bottom: 20px;
+}
+
+.fund-form-row {
+  display: flex;
   align-items: center;
   gap: 10px;
   flex-wrap: wrap;
-  margin-bottom: 20px;
 }
 
 .fund-kind {
@@ -3505,6 +3511,63 @@ textarea.tf-input {
   margin: 0;
 }
 
+/* 票据图片：细长拖拽区 + 已选文件 chip + 列表缩略图 */
+.fund-upload-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.fund-upload {
+  flex: 0 1 340px;
+  width: 340px;
+  max-width: 100%;
+}
+
+.fund-files {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  min-width: 0;
+}
+
+.fund-thumbs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.fund-thumb {
+  width: 64px;
+  height: 64px;
+  padding: 0;
+  overflow: hidden;
+  border: 1px solid var(--border-color);
+  border-radius: 10px;
+  background: var(--bg-elevated);
+  cursor: zoom-in;
+  transition: transform 0.5s var(--ease-spring), border-color 0.5s var(--ease-spring);
+}
+
+.fund-thumb:hover {
+  transform: translateY(-2px);
+  border-color: var(--accent-1-border);
+}
+
+.fund-thumb:active {
+  transform: scale(0.97);
+  transition-duration: 0.15s;
+}
+
+.fund-thumb img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
 .fund-list {
   display: flex;
   flex-direction: column;
@@ -3513,7 +3576,7 @@ textarea.tf-input {
 
 .fund-item {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   gap: 14px;
   padding: 14px 18px;
   border: 1px solid var(--border-color);
@@ -3523,6 +3586,15 @@ textarea.tf-input {
   box-shadow: var(--shadow-sm);
   backdrop-filter: blur(var(--glass-blur)) saturate(180%);
   -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(180%);
+}
+
+/* 有缩略图时行变高：徽章/金额贴齐标题行，不随整行垂直居中掉到图片旁边 */
+.fund-item > .badge {
+  margin-top: 2px;
+}
+
+.fund-amount {
+  padding-top: 2px;
 }
 
 .fund-main {
@@ -3573,6 +3645,16 @@ textarea.tf-input {
 
   .fund-form .tf-input[type="number"] {
     flex: 1 1 120px;
+  }
+
+  .fund-upload {
+    flex: 1 1 100%;
+    width: 100%;
+  }
+
+  .fund-thumb {
+    width: 56px;
+    height: 56px;
   }
 
   .fund-item {

@@ -42,7 +42,7 @@ DB_NAME = os.environ.get("MYSQL_DB", "scholarship")
 STUDENT_FIELDS = ("sid", "name", "class_id", "course_count", "credits", "gpa", "deyu", "score", "tiyu", "meiyu", "laoyu", "fujia", "failed", "total")
 AWARD_FIELDS = ("id", "sid", "name", "class_id", "category", "points", "basis", "evidence", "folder", "approved", "reject_reason", "created_at")
 ADMIN_FIELDS = ("username", "role", "class_id", "created_at", "nickname")
-FUND_FIELDS = ("id", "class_id", "kind", "amount", "title", "created_by", "created_at")
+FUND_FIELDS = ("id", "class_id", "kind", "amount", "title", "evidence", "created_by", "created_at")
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS students (
@@ -154,6 +154,7 @@ CREATE TABLE IF NOT EXISTS funds (
     kind VARCHAR(8) NOT NULL DEFAULT 'in',
     amount DECIMAL(12,2) NOT NULL DEFAULT 0,
     title VARCHAR(200) NOT NULL DEFAULT '',
+    evidence JSON NOT NULL,
     created_by VARCHAR(32) NOT NULL DEFAULT '',
     created_at DATETIME(6) NOT NULL,
     INDEX idx_funds_class (class_id, created_at)
@@ -198,6 +199,7 @@ def init_db():
             ("awards", "reject_reason", "reject_reason VARCHAR(500) NOT NULL DEFAULT ''"),
             ("admins", "nickname", "nickname VARCHAR(32) NOT NULL DEFAULT ''"),
             ("admins", "avatar", "avatar MEDIUMTEXT"),
+            ("funds", "evidence", "evidence JSON NULL"),
         ):
             cur.execute(
                 "SELECT COUNT(*) AS n FROM information_schema.COLUMNS "
@@ -535,7 +537,16 @@ def update_feedback(fid, fields):
 # ---------- funds（班费公示：管理员发布收支记录，所有人可查看；结余允许为负） ----------
 
 def _row_fund(row):
-    return {k: _plain(row[k]) for k in FUND_FIELDS}
+    result = {k: _plain(row[k]) for k in FUND_FIELDS if k in row}
+    evidence = result.get("evidence")
+    if isinstance(evidence, str):
+        try:
+            result["evidence"] = json.loads(evidence)
+        except (json.JSONDecodeError, TypeError):
+            result["evidence"] = []
+    elif not isinstance(evidence, list):
+        result["evidence"] = []
+    return result
 
 
 def list_funds(class_id):
@@ -554,11 +565,14 @@ def get_fund(fid):
     return _row_fund(row) if row else None
 
 
-def insert_fund(fid, class_id, kind, amount, title, created_by):
+def insert_fund(fid, class_id, kind, amount, title, evidence, created_by):
     with tx() as cur:
         cur.execute(
-            "INSERT INTO funds (id,class_id,kind,amount,title,created_by,created_at) VALUES (%s,%s,%s,%s,%s,%s,%s)",
-            (fid, class_id, kind, round(float(amount), 2), title, created_by, datetime.now()),
+            "INSERT INTO funds (id,class_id,kind,amount,title,evidence,created_by,created_at) VALUES (%s,%s,%s,%s,%s,%s,%s,%s)",
+            (
+                fid, class_id, kind, round(float(amount), 2), title,
+                json.dumps(list(evidence), ensure_ascii=False), created_by, datetime.now(),
+            ),
         )
 
 
@@ -714,14 +728,16 @@ def delete_class(cid):
 
 
 def clear_class_data(cid):
-    """清空班级数据：返回被删申报占用的证据文件夹列表。"""
+    """清空班级数据：返回 (被删申报占用的证据文件夹列表, 被删班费记录 id 列表)。"""
     with tx() as cur:
         cur.execute("SELECT DISTINCT folder FROM awards WHERE class_id=%s", (cid,))
         folders = [r["folder"] for r in cur.fetchall()]
+        cur.execute("SELECT id FROM funds WHERE class_id=%s", (cid,))
+        fund_ids = [r["id"] for r in cur.fetchall()]
         cur.execute("DELETE FROM awards WHERE class_id=%s", (cid,))
         cur.execute("DELETE FROM students WHERE class_id=%s", (cid,))
         cur.execute("DELETE FROM funds WHERE class_id=%s", (cid,))
-    return folders
+    return folders, fund_ids
 
 
 def set_class_meta(cid, rows, source):
