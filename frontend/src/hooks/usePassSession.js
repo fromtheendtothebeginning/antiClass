@@ -1,6 +1,6 @@
 // usePassSession.js — 加分一遍过的全部会话状态与处理（挂在 App 层：切换界面不丢对话）
 import { useEffect, useRef, useState } from "react";
-import { startAssess, sendAssess, finishAssess, rewindAssess, submitAssess } from "../api.js";
+import { startAssess, sendAssess, finishAssess, rewindAssess, submitAssess, uploadAssessEvidence } from "../api.js";
 import { rebuildPassItems } from "./passItems.js";
 
 export function usePassSession({ setError, setSubmitting, setSubmitMsg, loadAwards }) {
@@ -11,6 +11,7 @@ export function usePassSession({ setError, setSubmitting, setSubmitMsg, loadAwar
   const [passBusy, setPassBusy] = useState(false);
   const [passDone, setPassDone] = useState(false);
   const [passEnded, setPassEnded] = useState(false);
+  const [passSubmitted, setPassSubmitted] = useState(false); // 是否已通过申报 MCP 提交
   const [passProgress, setPassProgress] = useState(null); // 访谈进度 {done,total}（小节）
   const [passInput, setPassInput] = useState("");
   const [passErr, setPassErr] = useState("");
@@ -50,11 +51,12 @@ export function usePassSession({ setError, setSubmitting, setSubmitMsg, loadAwar
       setPassAttach([]);
       setPassDone(false);
       setPassEnded(false);
+      setPassSubmitted(false);
       setPassProgress(null);
       setRecallIdx(null);
       setRecallTarget(null);
       // 自动发送「开始」让 AI 提第一个问题（流式）
-      await sendPassMsg(data.session_id, "开始");
+      await sendPassMsg(data.session_id, "开始", [], []);
     } catch (err) {
       setPassErr(err.message);
     }
@@ -86,11 +88,19 @@ export function usePassSession({ setError, setSubmitting, setSubmitMsg, loadAwar
     setPassAttach((prev) => [...prev, ...files].slice(0, 5));
   }
 
-  async function sendPassMsg(sessionId, text, files = []) {
+  async function sendPassMsg(sessionId, text, files = [], itemsOverride = null) {
     setPassBusy(true);
     setPassErr("");
     try {
-      const res = await sendAssess(sessionId, text, files);
+      // 把学生当前确认列表（含手动增删改）同步给服务端，作为「申报 MCP」的权威提交列表
+      const itemsForState = itemsOverride !== null ? itemsOverride : passItems;
+      const stateItems = itemsForState.map((it) => ({
+        category: it.category,
+        points: parseFloat(it.points) || 0,
+        basis: it.basis || "",
+        evidence: it.evServer || []
+      }));
+      const res = await sendAssess(sessionId, text, files, stateItems);
       if (!res.ok) {
         const err = await res.json().catch(() => ({}));
         throw new Error(err.detail || `请求失败（${res.status}）`);
@@ -119,12 +129,67 @@ export function usePassSession({ setError, setSubmitting, setSubmitMsg, loadAwar
                 const arr = [...prev];
                 const last = arr[arr.length - 1];
                 if (last && last.role === "ai") {
-                  arr[arr.length - 1] = { role: "ai", text: last.text + ev.text };
+                  arr[arr.length - 1] = { ...last, text: last.text + ev.text };
                 } else {
                   arr.push({ role: "ai", text: ev.text });
                 }
                 return arr;
               });
+            } else if (ev.type === "reasoning" && ev.text) {
+              // 思考过程（默认折叠，前端按消息累积）
+              setPassMsgs((prev) => {
+                const arr = [...prev];
+                const last = arr[arr.length - 1];
+                if (last && last.role === "ai") {
+                  arr[arr.length - 1] = { ...last, reasoning: (last.reasoning || "") + ev.text };
+                } else {
+                  arr.push({ role: "ai", text: "", reasoning: ev.text });
+                }
+                return arr;
+              });
+            } else if (ev.type === "tool_call") {
+              // 申报 MCP 调用开始
+              setPassMsgs((prev) => {
+                const arr = [...prev];
+                const last = arr[arr.length - 1];
+                const tool = { ...ev, status: "running" };
+                if (last && last.role === "ai") {
+                  const tools = [...(last.tools || [])];
+                  const idx = tools.findIndex((t) => t.id === ev.id);
+                  if (idx >= 0) tools[idx] = tool;
+                  else tools.push(tool);
+                  arr[arr.length - 1] = { ...last, tools };
+                } else {
+                  arr.push({ role: "ai", text: "", tools: [tool] });
+                }
+                return arr;
+              });
+            } else if (ev.type === "tool_result") {
+              setPassMsgs((prev) =>
+                prev.map((m) => {
+                  if (m.role !== "ai" || !m.tools?.length) return m;
+                  if (!m.tools.some((t) => t.id === ev.id)) return m;
+                  return {
+                    ...m,
+                    tools: m.tools.map((t) =>
+                      t.id === ev.id
+                        ? {
+                            ...t,
+                            status: ev.ok ? "success" : "error",
+                            text: ev.text || "",
+                            result: ev.result || null,
+                          }
+                        : t
+                    ),
+                  };
+                })
+              );
+              if (ev.ok && ev.result?.mode === "submit") {
+                setPassSubmitted(true);
+                setPassDone(true);
+                setPassItems([]);
+                setSubmitMsg(ev.text || "已提交");
+              }
             } else if (ev.type === "add" && ev.items) {
               const added = ev.items.map((it) => ({ ...it, evidence: [], evServer: [] }));
               setPassItems((prev) => [...prev, ...added]);
@@ -157,6 +222,12 @@ export function usePassSession({ setError, setSubmitting, setSubmitMsg, loadAwar
               if (ev.done) setPassDone(true);
               if (ev.ended) setPassEnded(true);
               if (ev.progress) setPassProgress(ev.progress);
+              if (ev.submitted) {
+                setPassSubmitted(true);
+                setPassDone(true);
+                setPassEnded(true);
+                setPassItems([]);
+              }
             }
           }
         }
@@ -236,10 +307,29 @@ export function usePassSession({ setError, setSubmitting, setSubmitMsg, loadAwar
     setPassWarn("");
   }
 
-  function addPassItemFiles(idx, fileList) {
+  async function addPassItemFiles(idx, fileList) {
     const files = Array.from(fileList || []);
     if (!files.length) return;
+    // 先本地展示；能上传到会话目录就转为服务端证据（申报 MCP 落库时会带上）
     setPassItems((prev) => prev.map((it, i) => (i === idx ? { ...it, evidence: [...it.evidence, ...files] } : it)));
+    if (!passSess) return;
+    try {
+      const res = await uploadAssessEvidence(passSess.session_id, files);
+      setPassItems((prev) =>
+        prev.map((it, i) =>
+          i === idx
+            ? {
+                ...it,
+                evServer: [...(it.evServer || []), ...(res.files || [])],
+                evidence: (it.evidence || []).filter((f) => !files.includes(f)),
+              }
+            : it
+        )
+      );
+    } catch (err) {
+      // 上传失败：保留本地 File，最终手动提交时仍会随表单上传
+      setPassErr(err.message);
+    }
   }
 
   function removePassItemFile(idx, fi) {
@@ -273,30 +363,87 @@ export function usePassSession({ setError, setSubmitting, setSubmitMsg, loadAwar
       basis: it.basis || "",
       evidence: it.evServer || []
     }));
+    const toolId = `submit_${Date.now()}`;
+    setPassMsgs((prev) => [
+      ...prev,
+      {
+        role: "ai",
+        text: "",
+        tools: [
+          {
+            id: toolId,
+            name: "申报 MCP",
+            tool: "submit_application",
+            arguments: { mode: "submit", count: passItems.length },
+            status: "running",
+          },
+        ],
+      },
+    ]);
     setSubmitting(true);
     setPassErr("");
     try {
       const data = await submitAssess(passSess.session_id, itemsPayload, filesByIndex);
-      setSubmitMsg(`一遍过完成：已提交 ${data.created.length} 条申报，等待管理员审批`);
-      setPassSess(null);
-      setPassMsgs([]);
+      const result = data.tool_result || {};
+      const message = result.message || `已提交 ${data.created?.length || 0} 条申报，等待管理员审批`;
+      setPassMsgs((prev) =>
+        prev.map((m) => {
+          if (m.role !== "ai" || !m.tools?.some((t) => t.id === toolId)) return m;
+          return {
+            ...m,
+            tools: m.tools.map((t) =>
+              t.id === toolId ? { ...t, status: "success", text: message, result } : t
+            ),
+          };
+        })
+      );
+      setSubmitMsg(`一遍过完成：${message}`);
+      // 保留对话与工具调用卡片，只把会话标记为已提交/已结束；学生可用「重新开始」开新会话
+      setPassSubmitted(true);
+      setPassDone(true);
+      setPassEnded(true);
       setPassItems([]);
-      setPassDone(false);
-      setPassEnded(false);
-      setPassProgress(null);
-      setPassSid("");
       setPassConfirmSubmit(false);
       setPassNoEvItems([]);
       loadAwards();
     } catch (err) {
       setPassErr(err.message);
+      setPassMsgs((prev) =>
+        prev.map((m) => {
+          if (m.role !== "ai" || !m.tools?.some((t) => t.id === toolId)) return m;
+          return {
+            ...m,
+            tools: m.tools.map((t) =>
+              t.id === toolId ? { ...t, status: "error", text: err.message } : t
+            ),
+          };
+        })
+      );
     } finally {
       setSubmitting(false);
     }
   }
 
+  function resetPassSession() {
+    setPassSess(null);
+    setPassMsgs([]);
+    setPassItems([]);
+    setPassDone(false);
+    setPassEnded(false);
+    setPassSubmitted(false);
+    setPassProgress(null);
+    setPassSid("");
+    setPassInput("");
+    setPassAttach([]);
+    setPassErr("");
+    setPassWarn("");
+    setPassConfirmSubmit(false);
+    setPassNoEvItems([]);
+    setManualOpen(false);
+  }
+
   return {
-    passSid, setPassSid, passSess, passMsgs, passItems, passBusy, passDone, passEnded, passProgress,
+    passSid, setPassSid, passSess, passMsgs, passItems, passBusy, passDone, passEnded, passSubmitted, passProgress,
     passInput, setPassInput, passErr, passWarn, passAttach, setPassAttach,
     passConfirmSubmit, setPassConfirmSubmit, passNoEvItems, setPassNoEvItems,
     manualOpen, setManualOpen, manualItem, setManualItem,
@@ -304,6 +451,6 @@ export function usePassSession({ setError, setSubmitting, setSubmitMsg, loadAwar
     chatBoxRef, passInputRef,
     handlePassStart, handlePassQuick, handlePassSend, addPassAttach, handlePassFinish, handlePassRecall,
     updatePassItem, removePassItem, handleAddManualItem, addPassItemFiles, removePassItemFile, removePassItemServerFile,
-    handlePassSubmit,
+    handlePassSubmit, resetPassSession,
   };
 }

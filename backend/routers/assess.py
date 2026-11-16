@@ -3,7 +3,6 @@
 import json
 import shutil
 import uuid
-from datetime import datetime
 from pathlib import Path
 
 from fastapi import APIRouter, Form, HTTPException, Request
@@ -12,6 +11,7 @@ from pydantic import BaseModel
 
 import assess
 import db
+import mcp_apply
 from ai import classify, is_configured
 from common import (
     CATEGORY_CAP,
@@ -112,7 +112,9 @@ def _assess_classify_items(sess, text, image_paths, saved_names, upload_dir):
         if dup:
             continue
         with assess._LOCK:
-            sess["items"].append({"category": category, "points": points, "basis": basis})
+            sess["items"].append(
+                {"category": category, "points": points, "basis": basis, "evidence": files}
+            )
         out.append(
             {
                 "category": category,
@@ -138,13 +140,25 @@ async def assess_message(session_id: str, request: Request):
     ctype = (request.headers.get("content-type") or "").lower()
     text = ""
     files = []
+    state_items = None
+    raw_state = ""
     if ctype.startswith("multipart/"):
         form = await request.form()
         text = (form.get("text") or "").strip()
         files = form.getlist("files") if "files" in form else []
+        raw_state = form.get("state_items") or ""
     elif ctype.startswith("application/json"):
         body = await request.json()
-        text = (body.get("text") or "").strip() if isinstance(body, dict) else ""
+        if isinstance(body, dict):
+            text = (body.get("text") or "").strip()
+            raw_state = body.get("state_items") or ""
+    if raw_state:
+        try:
+            parsed_state = json.loads(raw_state) if isinstance(raw_state, str) else raw_state
+        except json.JSONDecodeError:
+            raise HTTPException(status_code=400, detail="state_items 格式错误")
+        if isinstance(parsed_state, list):
+            state_items = parsed_state
     if not text and not files:
         raise HTTPException(status_code=400, detail="请输入内容")
 
@@ -176,7 +190,7 @@ async def assess_message(session_id: str, request: Request):
     def _gen():
         assess.begin_turn(session_id)
         try:
-            yield from assess.run_turn(session_id, text, image_paths or None)
+            yield from assess.run_turn(session_id, text, image_paths or None, state_items=state_items)
             # 本轮有图片 → 走智能分类识图定分，识别出的加分项带证据自动汇入（SSE auto_items）
             if image_paths:
                 try:
@@ -199,6 +213,44 @@ async def assess_message(session_id: str, request: Request):
             "Connection": "keep-alive",
         },
     )
+
+
+@router.post("/api/assess/{session_id}/evidence")
+async def assess_evidence(session_id: str, request: Request):
+    """按条添加的本地证据即时上传到会话目录，返回服务端文件名。
+
+    这样「申报 MCP」落库时能带上证据（之前本地 File 只在最终手动提交时才上传）。
+    """
+    ip = request.client.host if request.client else "unknown"
+    rate_limit(f"assess_evidence:{ip}", 30, 600)
+    session = assess.get(session_id)
+    if not session:
+        raise HTTPException(status_code=404, detail="会话不存在或已过期，请重新开始")
+    if session.get("ended"):
+        raise HTTPException(status_code=400, detail="会话已结束，如需继续请重新开始")
+    form = await request.form()
+    files = [f for f in form.getlist("files") if getattr(f, "filename", None)][:MAX_FILES]
+    if not files:
+        raise HTTPException(status_code=400, detail="请选择证据文件")
+    folder = session.get("folder") or ""
+    new_folder = False
+    if not folder:
+        folder = uuid.uuid4().hex
+        session["folder"] = folder
+        new_folder = True
+    upload_dir = UPLOADS_DIR / folder
+    upload_dir.mkdir(parents=True, exist_ok=True)
+    saved = []
+    try:
+        for f in files:
+            saved.append(save_upload(f, upload_dir))
+    except HTTPException:
+        if new_folder and not saved and upload_dir.is_dir() and not any(upload_dir.iterdir()):
+            shutil.rmtree(upload_dir, ignore_errors=True)
+            session["folder"] = ""
+        raise
+    assess.touch_updated(session)
+    return {"ok": True, "files": saved}
 
 
 @router.post("/api/assess/{session_id}/finish")
@@ -237,6 +289,8 @@ async def assess_submit(session_id: str, request: Request):
     sess = assess.get(session_id)
     if not sess:
         raise HTTPException(status_code=404, detail="会话不存在或已过期")
+    if sess.get("submitted"):
+        raise HTTPException(status_code=400, detail="本次加分项已通过「申报 MCP」提交，无需重复提交")
     form = await request.form()
     items_raw = (form.get("items") or "").strip()
     try:
@@ -311,34 +365,50 @@ async def assess_submit(session_id: str, request: Request):
                 raise
         evidence_by_index[i] = evs
 
-    created = []
-    now = datetime.now()
-    for i, it in enumerate(cleaned):
-        folder_used = (sess_folder) if (sess_dir and evidence_by_index[i]) else ""
-        if not folder_used and upload_dir:
-            folder_used = upload_dir.name
-        created.append(
-            {
-                "id": uuid.uuid4().hex,
-                "sid": sess["sid"],
-                "name": sess["name"],
-                "class_id": sess["class_id"],
-                "category": it["category"],
-                "points": it["points"],
-                "basis": it["basis"],
-                "evidence": evidence_by_index[i],
-                "folder": folder_used,
-                "approved": "否",
-                "created_at": now,
-            }
-        )
-    db.insert_awards(created)
-    for r in created:
-        r["created_at"] = r["created_at"].isoformat(timespec="seconds")
+    items = [
+        {
+            "category": it["category"],
+            "points": it["points"],
+            "basis": it["basis"],
+            "evidence": evidence_by_index[i],
+        }
+        for i, it in enumerate(cleaned)
+    ]
+    # 提交统一走「申报 MCP」：工作流调用 tools/call(mode=submit)，不再直接 db.insert_awards。
+    if upload_dir and not sess_dir:
+        sess["folder"] = upload_dir.name  # 新上传的证据目录回填，工具按该目录校验证据
+    with assess._LOCK:
+        sess["items"] = items
+    ctx = {
+        "sid": sess["sid"],
+        "class_id": sess.get("class_id", ""),
+        "semester_id": sess.get("semester_id", ""),
+        "items": items,
+        "folder": sess.get("folder", ""),
+        "allowed_evidence": [f for it in items for f in it["evidence"]],
+    }
+    # 预占 submitted：双击/并发请求只允许一个真正调用 MCP，失败再释放
+    with assess._LOCK:
+        if sess.get("submitted"):
+            raise HTTPException(status_code=400, detail="本次加分项已通过「申报 MCP」提交，无需重复提交")
+        sess["submitted"] = True
+    result = mcp_apply.call_tool_internal("submit_application", {"mode": "submit"}, ctx)
+    if not result.get("ok"):
+        with assess._LOCK:
+            sess["submitted"] = False
+        if upload_dir and not sess_dir:
+            shutil.rmtree(upload_dir, ignore_errors=True)
+        raise HTTPException(status_code=400, detail=result.get("error") or "申报失败")
+    created_ids = list(result.get("ids") or [])
+    if upload_dir and not sess_dir and not created_ids:
+        shutil.rmtree(upload_dir, ignore_errors=True)  # 全部重复/未入库，新证据目录无人引用
+    with assess._LOCK:
+        sess["submitted"] = True
+        sess["submitted_ids"] = created_ids
+        sess["done"] = True
+        sess["ended"] = True
     # 清理：会话目录若无任何 award 引用（该轮证据全部未入库/被删），删除之
-    if sess_dir and sess_dir.is_dir():
-        used = any(r["folder"] == sess_folder for r in created)
-        if not used and not db.folder_in_use(sess_folder):
-            shutil.rmtree(sess_dir, ignore_errors=True)
+    if sess_dir and sess_dir.is_dir() and not db.folder_in_use(sess_folder):
+        shutil.rmtree(sess_dir, ignore_errors=True)
     assess.drop(session_id)
-    return {"created": created}
+    return {"created": created_ids, "tool_result": result}

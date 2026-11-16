@@ -54,6 +54,15 @@ export function fetchMe(token) {
   return request("/me", { headers: { Authorization: `Bearer ${token}` } });
 }
 
+// 凭一次性邀请码注册管理员：成功即返回登录会话（token/role/class_id/class_name）
+export function registerAdmin(code, username, password) {
+  return request("/register", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ code, username, password })
+  });
+}
+
 // 改当前账号的昵称/头像：avatar 省略/传 null = 不变，"" = 清除，data URL = 替换
 export function updateProfile(payload, token) {
   return request("/profile", {
@@ -169,6 +178,46 @@ export function resetAdminPassword(username, password, token) {
 export function deleteAdmin(username, token) {
   return request(`/admins/${encodeURIComponent(username)}`, {
     method: "DELETE",
+    headers: { Authorization: `Bearer ${token}` }
+  });
+}
+
+// 邀请码（root）：生成时绑定班级，一次性使用；撤销只能作用于未使用的码
+export function listInvites(token) {
+  return request("/invites", { headers: { Authorization: `Bearer ${token}` } });
+}
+
+export function createInvite(classId, token) {
+  return request("/invites", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+    body: JSON.stringify({ class_id: classId })
+  });
+}
+
+export function revokeInvite(id, token) {
+  return request(`/invites/${id}/revoke`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${token}` }
+  });
+}
+
+// 申报 MCP 专属 token：各班管理员生成/发放，绑定班级；明文只在创建时返回一次
+export function listMcpTokens(token) {
+  return request("/mcp/tokens", { headers: { Authorization: `Bearer ${token}` } });
+}
+
+export function createMcpToken(label, classId, token) {
+  return request("/mcp/tokens", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+    body: JSON.stringify({ label, class_id: classId })
+  });
+}
+
+export function revokeMcpToken(id, token) {
+  return request(`/mcp/tokens/${id}/revoke`, {
+    method: "POST",
     headers: { Authorization: `Bearer ${token}` }
   });
 }
@@ -455,9 +504,11 @@ export function startAssess(sid) {
 }
 
 // 发送一轮消息（可附带文件/图片，multipart），返回可读流（text/event-stream）
-export async function sendAssess(sessionId, text, files = []) {
+// stateItems: 前端当前确认的加分项（含服务端证据名），供「申报 MCP」按学生所见列表提交
+export async function sendAssess(sessionId, text, files = [], stateItems = null) {
   const form = new FormData();
   form.append("text", text);
+  if (Array.isArray(stateItems)) form.append("state_items", JSON.stringify(stateItems));
   files.forEach((f) => form.append("files", f));
   const path = `/assess/${sessionId}/message`;
   const res = await fetch(`${API}${path}`, {
@@ -473,6 +524,13 @@ export async function sendAssess(sessionId, text, files = []) {
     throw e;
   }
   return res;
+}
+
+// 按条添加的证据即时上传到会话目录，返回服务端文件名（申报 MCP 落库时带上）
+export function uploadAssessEvidence(sessionId, files) {
+  const form = new FormData();
+  files.forEach((f) => form.append("files", f));
+  return request(`/assess/${sessionId}/evidence`, { method: "POST", body: form });
 }
 
 export function finishAssess(sessionId) {

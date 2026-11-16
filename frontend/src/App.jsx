@@ -2,6 +2,7 @@
 import { useEffect, useRef, useState } from "react";
 import {
   login,
+  registerAdmin,
   logout,
   fetchMe,
   fetchLeaderboard,
@@ -32,6 +33,7 @@ import { useLandingAdmin } from "./hooks/useLandingAdmin.js";
 import { useProfile } from "./hooks/useProfile.js";
 import { useFeedback } from "./hooks/useFeedback.js";
 import { useFunds } from "./hooks/useFunds.js";
+import { useMcpTokens } from "./hooks/useMcpTokens.js";
 import PassPage from "./pages/PassPage.jsx";
 import BoardPage from "./pages/BoardPage.jsx";
 import ApplyPage from "./pages/ApplyPage.jsx";
@@ -44,6 +46,7 @@ import LandingPage from "./pages/LandingPage.jsx";
 import ProfilePage from "./pages/ProfilePage.jsx";
 import FeedbackPage from "./pages/FeedbackPage.jsx";
 import FundsPage from "./pages/FundsPage.jsx";
+import McpTokenPage from "./pages/McpTokenPage.jsx";
 
 const TOKEN_KEY = "token";
 const ROLE_KEY = "role";
@@ -72,6 +75,7 @@ export default function App() {
   const [landingPick, setLandingPick] = useState("");
   const [tab, setTab] = useState(""); // 空串 = 刚进入，只显示侧边栏，等用户点具体界面
   const schTabRef = useRef("board"); // 记住「奖学金评定」界面内最后停留的子页面
+  const prevTabRef = useRef("board"); // 进入「加分一遍过」前所在的界面（供返回按钮用）
 
   const [loginOpen, setLoginOpen] = useState(false);
   const [loginNotice, setLoginNotice] = useState("");
@@ -83,6 +87,16 @@ export default function App() {
   const [loginFieldErr, setLoginFieldErr] = useState({});
   const [loginBusy, setLoginBusy] = useState(false);
   const [loginShowPass, setLoginShowPass] = useState(false);
+
+  // 邀请码注册管理员（成功后直接登录，班级由邀请码决定）
+  const [registerOpen, setRegisterOpen] = useState(false);
+  const [regCode, setRegCode] = useState("");
+  const [regUser, setRegUser] = useState("");
+  const [regPass, setRegPass] = useState("");
+  const [regPass2, setRegPass2] = useState("");
+  const [regErr, setRegErr] = useState("");
+  const [regFieldErr, setRegFieldErr] = useState({});
+  const [regBusy, setRegBusy] = useState(false);
 
   const [students, setStudents] = useState([]);
   const [meta, setMeta] = useState({});
@@ -119,6 +133,7 @@ export default function App() {
   const profileForm = useProfile({ token, profile, setProfile, nickInput, setNickInput, avatarPreview, setAvatarPreview });
   const feedback = useFeedback({ token, tab, setError });
   const funds = useFunds({ token, tab, classSel, setError });
+  const mcpTokens = useMcpTokens({ token, role, myClassId, tab, classes, setError });
 
   async function loadBoard(cid, sid = semesterSel) {
     // 榜单按「班级 + 学期」展示：缺任一项都不发请求，避免拿到后端跨班/跨学期合并的榜单
@@ -279,25 +294,70 @@ export default function App() {
     }
   }, [tab, openSemesterId, semesterSel]);
 
+  // 登录/注册共用的会话落地：写 localStorage + 更新全局登录态（注册后自动登录）
+  function applySession(data) {
+    localStorage.setItem(TOKEN_KEY, data.token);
+    localStorage.setItem(ROLE_KEY, data.role || "");
+    localStorage.setItem(MY_CLASS_KEY, data.class_id || "");
+    setToken(data.token);
+    setRole(data.role || "");
+    setMyClassId(data.class_id || "");
+    setAccount(data.username || "");
+    setProfile({ nickname: data.nickname || "", avatar: "" });
+    setNickInput(data.nickname || "");
+    setAvatarPreview("");
+  }
+
   async function handleLogin(e) {
     e.preventDefault();
     setError("");
     try {
       const data = await login(username, password);
-      localStorage.setItem(TOKEN_KEY, data.token);
-      localStorage.setItem(ROLE_KEY, data.role || "");
-      localStorage.setItem(MY_CLASS_KEY, data.class_id || "");
-      setToken(data.token);
-      setRole(data.role || "");
-      setMyClassId(data.class_id || "");
-      setAccount(data.username || "");
-      setProfile({ nickname: data.nickname || "", avatar: "" });
-      setNickInput(data.nickname || "");
-      setAvatarPreview("");
+      applySession(data);
       setPassword("");
       setLoginOpen(false);
     } catch (err) {
       setError(err.message);
+    }
+  }
+
+  function openRegister() {
+    // 从登录弹窗切到注册弹窗（不叠加两层弹窗）
+    setLoginOpen(false);
+    setError("");
+    setLoginFieldErr({});
+    setLoginNotice("");
+    setRegErr("");
+    setRegFieldErr({});
+    setRegisterOpen(true);
+  }
+
+  async function handleRegister(e) {
+    e.preventDefault();
+    const code = regCode.trim().toUpperCase();
+    const user = regUser.trim();
+    const errs = {};
+    if (!code) errs.code = "请输入邀请码";
+    if (!/^[A-Za-z0-9_]{3,32}$/.test(user) || user === "root") errs.username = "用户名限 3-32 位字母/数字/下划线";
+    if (regPass.length < 6) errs.password = "密码至少 6 位";
+    if (regPass !== regPass2) errs.password2 = "两次输入的密码不一致";
+    setRegFieldErr(errs);
+    if (Object.keys(errs).length) return;
+    setRegErr("");
+    setRegBusy(true);
+    try {
+      const data = await registerAdmin(code, user, regPass);
+      applySession(data);
+      setRegisterOpen(false);
+      setRegCode("");
+      setRegUser("");
+      setRegPass("");
+      setRegPass2("");
+      setPassword("");
+    } catch (err) {
+      setRegErr(err.message);
+    } finally {
+      setRegBusy(false);
     }
   }
 
@@ -352,10 +412,25 @@ export default function App() {
 
   function switchTab(next) {
     // 记住「奖学金评定」界面里最后停留的子页面，从工作台其它界面点回来时不会丢上下文
+    if (next === "pass" && tab !== "pass") {
+      // 记录进入一遍过前所在的界面（含班费/反馈等）；没有记录时回落榜单
+      prevTabRef.current = tab || "board";
+    }
     if (SCH_TABS.includes(next)) schTabRef.current = next;
     setTab(next);
     setError("");
     if (next === "approve") loadAwards();
+  }
+
+  // 一遍过「返回上个界面」：回到进入前所在的界面；目标已不可见（如登出后）则回榜单
+  function goBackFromPass() {
+    const t = prevTabRef.current;
+    const ok =
+      SCH_TABS.includes(t) ||
+      t === "fund" ||
+      t === "feedback" ||
+      (token && ["cfg_appearance", "cfg_landing", "cfg_profile", "cfg_model", "cfg_accounts"].includes(t));
+    switchTab(ok && t !== "pass" ? t : "board");
   }
 
   const pendingCount = awards.filter((a) => a.approved === "否").length;
@@ -451,6 +526,7 @@ export default function App() {
                           { value: "cfg_accounts", label: "账号管理" },
                         ]
                       : []),
+                    { value: "cfg_mcp", label: "MCP Token" },
                     { value: "cfg_appearance", label: "背景图案" },
                     { value: "cfg_landing", label: "开始界面" },
                     { value: "cfg_profile", label: "个人资料" },
@@ -467,25 +543,29 @@ export default function App() {
               右侧「导出 Excel」是该界面自己的操作（导出当前班级的综合测评总分），未选班级时禁用 */}
           {(token ? SCH_TABS : PUBLIC_TABS).includes(tab) && (
             <nav className="tabs">
-              {/* 学期选择：浏览榜单/审批/数据管理时可切换历史学期；申报页固定为开放申报学期 */}
-              {!["apply", "pass"].includes(tab) && semesters.length > 0 && (
-                <div className="semester-bar">
-                  <label>学期</label>
-                  <Dropdown
-                    value={semesterSel}
-                    onChange={handlePickSemester}
-                    options={semesters.map((s) => ({
-                      value: s.id,
-                      label: s.term ? `${s.label} · ${s.term}` : s.label,
-                    }))}
-                    placeholder="选择学期"
-                  />
+              {/* 学期位固定宽度：申报页换成「申报学期：X」提示、或学期名长短变化时，
+                  GlassTabs 的起点都不漂移（否则切换页面时整排 Tab 会左右跳） */}
+              {semesters.length > 0 && (
+                <div className="semester-slot">
+                  {!["apply", "pass"].includes(tab) ? (
+                    <div className="semester-bar">
+                      <label>学期</label>
+                      <Dropdown
+                        value={semesterSel}
+                        onChange={handlePickSemester}
+                        options={semesters.map((s) => ({
+                          value: s.id,
+                          label: s.term ? `${s.label} · ${s.term}` : s.label,
+                        }))}
+                        placeholder="选择学期"
+                      />
+                    </div>
+                  ) : (
+                    <span className="semester-hint" title="由管理员设置，学生申报自动提交到该学期">
+                      申报学期：{openSemester ? openSemester.label : "未开放"}
+                    </span>
+                  )}
                 </div>
-              )}
-              {["apply", "pass"].includes(tab) && openSemester && (
-                <span className="semester-hint" title="由管理员设置，学生申报自动提交到该学期">
-                  申报学期：{openSemester.label}
-                </span>
               )}
               <GlassTabs
                 value={tab}
@@ -524,6 +604,7 @@ export default function App() {
                 handlePickClass={handlePickClass}
                 students={students}
                 submitting={submitting}
+                onBack={goBackFromPass}
               />
             )}
             {tab === "board" && (
@@ -583,6 +664,9 @@ export default function App() {
             )}
             {tab === "cfg_accounts" && token && role === "root" && (
               <AccountsPage accounts={accounts} classes={classes} manageMsg={manageMsg} />
+            )}
+            {tab === "cfg_mcp" && token && (
+              <McpTokenPage mcpTokens={mcpTokens} classes={classes} role={role} myClassId={myClassId} />
             )}
             {tab === "cfg_appearance" && token && (
               <AppearancePage
@@ -686,6 +770,108 @@ export default function App() {
           <button type="submit" className="btn login-submit" aria-busy={loginBusy ? "true" : undefined} disabled={loginBusy}>
             {loginBusy ? <><span className="spin" /> 登录中…</> : "登 录"}
             {!loginBusy && <span className="login-arrow" aria-hidden="true">→</span>}
+          </button>
+          <button type="button" className="login-register-link" onClick={openRegister}>
+            有邀请码？注册管理员
+          </button>
+        </form>
+      </Modal>
+
+      <Modal
+        open={registerOpen}
+        sheetClass="login-sheet"
+        title="注册管理员"
+        showConfirm={false}
+        cancelText="取消"
+        alignTop
+        onCancel={() => { setRegisterOpen(false); setRegErr(""); setRegFieldErr({}); }}
+      >
+        <form className="login-form" onSubmit={handleRegister} noValidate>
+          {regErr && <div className="login-server-error" role="alert">{regErr}</div>}
+
+          <div className="login-field">
+            <label className="login-label" htmlFor="reg-code">邀请码</label>
+            <TextField
+              id="reg-code"
+              className={`login-input reg-code-input${regFieldErr.code ? " invalid" : ""}`}
+              value={regCode}
+              onChange={(e) => {
+                setRegCode(e.target.value.toUpperCase());
+                if (regFieldErr.code) setRegFieldErr({ ...regFieldErr, code: "" });
+              }}
+              placeholder="请输入 root 提供的邀请码"
+              autoComplete="off"
+              autoCapitalize="characters"
+              spellCheck={false}
+              maxLength={16}
+              aria-invalid={regFieldErr.code ? "true" : undefined}
+              data-autofocus
+            />
+            {regFieldErr.code && <span className="login-field-error" role="alert">{regFieldErr.code}</span>}
+          </div>
+
+          <div className="login-field">
+            <label className="login-label" htmlFor="reg-username">账号</label>
+            <TextField
+              id="reg-username"
+              className={`login-input${regFieldErr.username ? " invalid" : ""}`}
+              value={regUser}
+              onChange={(e) => {
+                setRegUser(e.target.value);
+                if (regFieldErr.username) setRegFieldErr({ ...regFieldErr, username: "" });
+              }}
+              placeholder="3-32 位字母/数字/下划线"
+              autoComplete="username"
+              aria-invalid={regFieldErr.username ? "true" : undefined}
+            />
+            {regFieldErr.username && <span className="login-field-error" role="alert">{regFieldErr.username}</span>}
+          </div>
+
+          <div className="login-field">
+            <label className="login-label" htmlFor="reg-password">密码</label>
+            <TextField
+              id="reg-password"
+              className={`login-input${regFieldErr.password ? " invalid" : ""}`}
+              type="password"
+              value={regPass}
+              onChange={(e) => {
+                setRegPass(e.target.value);
+                if (regFieldErr.password) setRegFieldErr({ ...regFieldErr, password: "" });
+              }}
+              placeholder="至少 6 位"
+              autoComplete="new-password"
+              aria-invalid={regFieldErr.password ? "true" : undefined}
+            />
+            {regFieldErr.password && <span className="login-field-error" role="alert">{regFieldErr.password}</span>}
+          </div>
+
+          <div className="login-field">
+            <label className="login-label" htmlFor="reg-password2">确认密码</label>
+            <TextField
+              id="reg-password2"
+              className={`login-input${regFieldErr.password2 ? " invalid" : ""}`}
+              type="password"
+              value={regPass2}
+              onChange={(e) => {
+                setRegPass2(e.target.value);
+                if (regFieldErr.password2) setRegFieldErr({ ...regFieldErr, password2: "" });
+              }}
+              placeholder="再次输入密码"
+              autoComplete="new-password"
+              aria-invalid={regFieldErr.password2 ? "true" : undefined}
+            />
+            {regFieldErr.password2 && <span className="login-field-error" role="alert">{regFieldErr.password2}</span>}
+          </div>
+
+          <button type="submit" className="btn login-submit" aria-busy={regBusy ? "true" : undefined} disabled={regBusy}>
+            {regBusy ? <><span className="spin" /> 注册中…</> : "注 册"}
+          </button>
+          <button
+            type="button"
+            className="login-register-link"
+            onClick={() => { setRegisterOpen(false); setLoginOpen(true); }}
+          >
+            返回登录
           </button>
         </form>
       </Modal>

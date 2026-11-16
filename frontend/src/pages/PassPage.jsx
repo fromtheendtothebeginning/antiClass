@@ -11,19 +11,25 @@ import { renderMd } from "../utils/markdown.js";
 import { isImage } from "../utils/img.js";
 import { CATEGORY_OPTIONS } from "../constants.js";
 
-export default function PassPage({chat, classes, classSel, handlePickClass, students, submitting}) {
+export default function PassPage({chat, classes, classSel, handlePickClass, students, submitting, onBack}) {
   const {
-    passSid, setPassSid, passSess, passMsgs, passItems, passBusy, passDone, passEnded, passProgress, passInput, setPassInput,
+    passSid, setPassSid, passSess, passMsgs, passItems, passBusy, passDone, passEnded, passSubmitted, passProgress, passInput, setPassInput,
     passErr, passWarn, passAttach, setPassAttach, passConfirmSubmit, setPassConfirmSubmit, passNoEvItems,
     setPassNoEvItems, manualOpen, setManualOpen, manualItem, setManualItem, recallIdx, setRecallIdx,
     recallTarget, setRecallTarget, recalling, chatBoxRef, passInputRef, handlePassStart, handlePassQuick,
     handlePassSend, addPassAttach, handlePassFinish, handlePassRecall, updatePassItem, removePassItem,
     handleAddManualItem, addPassItemFiles, removePassItemFile, removePassItemServerFile, handlePassSubmit,
+    resetPassSession,
   } = chat;
   return (
     <>
           <div className="panel">
-            <h2>加分一遍过</h2>
+            <div className="page-head">
+              <h2>加分一遍过</h2>
+              <button type="button" className="btn small ghost" onClick={onBack}>
+                ← 返回上个界面
+              </button>
+            </div>
             {classes.length > 1 && (
               <div className="class-bar">
                 <label>当前班级</label>
@@ -69,9 +75,13 @@ export default function PassPage({chat, classes, classSel, handlePickClass, stud
                   <div className="assess-head">
                     <strong>{passSess.sid} {passSess.name} · 加分一遍过</strong>
                     {passDone && !passEnded && <span className="badge pending">询问完成 · 可补充一次</span>}
-                    {passEnded && <span className="badge pending">对话已结束</span>}
+                    {passSubmitted && <span className="badge approved">已通过申报 MCP 提交</span>}
+                    {passEnded && !passSubmitted && <span className="badge pending">对话已结束</span>}
                     {!passDone && (
                       <button className="btn small ghost" disabled={passBusy} onClick={handlePassFinish}>结束询问</button>
+                    )}
+                    {passEnded && (
+                      <button className="btn small ghost" onClick={resetPassSession}>重新开始</button>
                     )}
                   </div>
                   <div className="chat-box" ref={chatBoxRef}>
@@ -81,7 +91,7 @@ export default function PassPage({chat, classes, classSel, handlePickClass, stud
                         {/* 撤回按钮常驻渲染，由 CSS 在「悬停整行 / 键盘聚焦 / 触屏点击固定」时显示。
                             recallIdx 仅作触屏兜底（无 hover 设备点气泡=常驻）。
                             流式输出中不渲染：此时撤回会把后续增量拼到已删除的消息上。 */}
-                        {m.role === "user" && !passBusy && (
+                        {m.role === "user" && !passBusy && !passEnded && (
                           <button
                             type="button"
                             className="chat-undo"
@@ -105,10 +115,92 @@ export default function PassPage({chat, classes, classSel, handlePickClass, stud
                           }
                         >
                           {m.role === "ai" ? (
-                            <div
-                              className="markdown-body chat-md"
-                              dangerouslySetInnerHTML={{ __html: renderMd((m.text || "…").split("==JSON==")[0]) }}
-                            />
+                            <>
+                              {m.reasoning && (
+                                <details className="chat-think">
+                                  <summary>
+                                    思考过程
+                                    <span className="chat-think-len">{m.reasoning.length} 字</span>
+                                  </summary>
+                                  <div className="chat-think-body">{m.reasoning}</div>
+                                </details>
+                              )}
+                              {m.tools && m.tools.length > 0 && (
+                                <div className="chat-tools">
+                                  {m.tools.map((tool) => (
+                                    <div key={tool.id} className={`chat-tool ${tool.status}`}>
+                                      <div className="chat-tool-head">
+                                        <span className="chat-tool-badge">申报 MCP</span>
+                                        <span className="chat-tool-name">{tool.tool || "submit_application"}</span>
+                                        <span className={`chat-tool-status ${tool.status}`}>
+                                          {tool.status === "running"
+                                            ? "调用中…"
+                                            : tool.status === "success"
+                                              ? tool.result?.mode === "stage"
+                                                ? "已暂存"
+                                                : "已提交"
+                                              : "失败"}
+                                        </span>
+                                      </div>
+                                      {tool.status === "running" && (
+                                        <p className="chat-tool-result">
+                                          {tool.arguments?.mode === "stage"
+                                            ? "正在把新增加分项放入暂存队列…"
+                                            : "正在提交为待审批申报…"}
+                                        </p>
+                                      )}
+                                      {tool.result ? (
+                                        <>
+                                          <p className={`chat-tool-result ${tool.status}`}>
+                                            {tool.result.message || tool.text}
+                                          </p>
+                                          {(() => {
+                                            const items = Array.isArray(tool.result.items)
+                                              ? tool.result.items
+                                              : Array.isArray(tool.result.staged_items)
+                                                ? tool.result.staged_items
+                                                : [];
+                                            if (!items.length) return null;
+                                            return (
+                                              <div className="chat-tool-items">
+                                                {items.map((it, ti) => {
+                                                  const evCount = Array.isArray(it.evidence)
+                                                    ? it.evidence.length
+                                                    : Number(it.evidence || 0);
+                                                  return (
+                                                    <span key={ti} className="chat-tool-item">
+                                                      {it.category} +{it.points}
+                                                      {evCount > 0 ? ` · 证据 ${evCount}` : ""}
+                                                    </span>
+                                                  );
+                                                })}
+                                              </div>
+                                            );
+                                          })()}
+                                        </>
+                                      ) : (
+                                        tool.text && <p className="chat-tool-result error">{tool.text}</p>
+                                      )}
+                                      {tool.arguments && Object.keys(tool.arguments).length > 0 && (
+                                        <details className="chat-tool-args">
+                                          <summary>调用参数</summary>
+                                          <pre>{JSON.stringify(tool.arguments, null, 2)}</pre>
+                                        </details>
+                                      )}
+                                    </div>
+                                  ))}
+                                </div>
+                              )}
+                              <div
+                                className="markdown-body chat-md"
+                                dangerouslySetInnerHTML={{
+                                  __html: renderMd(
+                                    (m.text || (m.reasoning || (m.tools && m.tools.length) ? "" : "…"))
+                                      .split("==JSON==")[0]
+                                  )
+                                }}
+                              />
+                            </>
                           ) : (
                             <>
                               <div>{m.text || "…"}</div>
@@ -190,7 +282,7 @@ export default function PassPage({chat, classes, classSel, handlePickClass, stud
                     <div className="file-count">访谈进度：{passProgress.done}/{passProgress.total} 小节已完成</div>
                   )}
 
-                  {passItems.length === 0 && (
+                  {!passSubmitted && passItems.length === 0 && (
                     <div className="assess-items edit">
                       <div className="assess-edit-head">
                         <span className="file-count">尚未识别到加分项</span>
@@ -203,7 +295,7 @@ export default function PassPage({chat, classes, classSel, handlePickClass, stud
                       )}
                     </div>
                   )}
-                  {passItems.length > 0 && (
+                  {!passSubmitted && passItems.length > 0 && (
                     <div className="assess-items edit">
                       <div className="assess-edit-head">
                         <span className="file-count">加分项（{passItems.length}）· 可修改栏目/分值/依据并添加证据</span>
@@ -265,13 +357,13 @@ export default function PassPage({chat, classes, classSel, handlePickClass, stud
                     </div>
                   )}
 
-                  <div className="assess-actions">
-                    {passItems.length > 0 && (
+                  {!passSubmitted && passItems.length > 0 && (
+                    <div className="assess-actions">
                       <button className="btn primary-btn" disabled={submitting} onClick={handlePassSubmit}>
                         {submitting ? <><span className="spin" /> 提交中…</> : `提交 ${passItems.length} 条为待审批申报`}
                       </button>
-                    )}
-                  </div>
+                    </div>
+                  )}
                 </>
               )}
             </div>

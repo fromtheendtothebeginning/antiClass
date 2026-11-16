@@ -226,6 +226,38 @@ def get_admins(authorization: str = Header(default="")):
     return {"admins": db.list_admins()}
 
 
+# ---------- 邀请码（root 生成，绑定班级；用户凭码自助注册管理员） ----------
+
+class InviteBody(BaseModel):
+    class_id: str
+
+
+@router.get("/api/invites")
+def list_invites(authorization: str = Header(default="")):
+    require_root(authorization)
+    return {"invites": db.list_invites()}
+
+
+@router.post("/api/invites")
+def add_invite(body: InviteBody, authorization: str = Header(default="")):
+    session = require_root(authorization)
+    cls = db.get_class((body.class_id or "").strip())
+    if not cls:
+        raise HTTPException(status_code=400, detail="班级不存在")
+    invite = db.create_invite(cls["id"], session["username"])
+    if not invite:
+        raise HTTPException(status_code=400, detail="生成失败，请重试")
+    return {"ok": True, "invite": invite}
+
+
+@router.post("/api/invites/{iid}/revoke")
+def revoke_invite(iid: str, authorization: str = Header(default="")):
+    require_root(authorization)
+    if not db.revoke_invite(iid):
+        raise HTTPException(status_code=400, detail="只能撤销未使用且未撤销的邀请码")
+    return {"ok": True}
+
+
 @router.post("/api/upload")
 def upload(
     file: UploadFile = File(...),

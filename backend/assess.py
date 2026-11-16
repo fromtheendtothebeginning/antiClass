@@ -11,6 +11,7 @@ import uuid
 
 import ai
 import db
+import mcp_apply
 
 SESSION_LIMIT = 100
 SESSION_TTL = 3600  # 1 小时无交互自动回收
@@ -98,6 +99,12 @@ SYSTEM_PROMPT = """你是上海应用技术大学智能技术学部综合奖学�
 - 系统会在每轮消息里注入【访谈进度台账】（已完成小节/剩余小节/待复核事项）。判断"接下来问什么"**以台账为准**，不要依赖对话历史的记忆；台账里已完成的小节**绝不再问**。
 - 待复核事项在推进到对应小节时逐项对照原文核定，核定完（加分或不加分）即从 notes 清单中移除。
 - **全部小节完成后的收尾**：不再提问新问题，逐条复述本会话确认的加分项（栏目、分值、依据），说明提交前可在下方列表核对修改，然后 done=true 结束访谈。
+
+# 申报工单与暂存队列
+- 系统**不向你提供任何函数工具**，你不能直接调用工具或提交申报，也不要声称"已调用工具"。
+- 你识别到的每个加分项必须写进本轮 JSON 协议的 `add` 数组；系统会把它作为「申报 MCP · 暂存」调用放入学生的**暂存队列**（生成工单的过程就是这次 MCP 调用）。
+- 学生明确确认提交时，只需提醒学生核对下方列表并点击「提交 N 条为待审批申报」；实际提交由系统调用申报 MCP 完成，你不需要也不能在回复里直接提交。
+- 不要在学生还没确认、或列表为空时催促提交；正常继续访谈即可。
 
 # 输出协议（严格遵守）
 **每一轮**回复都必须以协议收尾：正文结束后，另起一行单独输出机器可读的 JSON 段（**不要**包在```代码块里、**不要**在其后再写任何文字），格式为一行：
@@ -194,6 +201,8 @@ def _load_locked(session_id):
         "ended": bool(state.get("ended")),
         "turns": state.get("turns", []),
         "ledger": state.get("ledger") or _empty_ledger(),
+        "submitted": bool(state.get("submitted")),
+        "submitted_ids": state.get("submitted_ids", []),
         "busy": 0,
     }
 
@@ -237,6 +246,8 @@ def start(sid, name, class_id, semester_id):
             "ended": False,
             "turns": [],  # 每轮结束打一个切片标记 {"msgs","items","done","ledger"}，供 rewind 按轮回滚
             "ledger": _empty_ledger(),  # 访谈进度台账（确定性记录，每轮随协议更新并注入）
+            "submitted": False,  # 是否已通过「申报 MCP」提交（提交后会话结束，防重复提交）
+            "submitted_ids": [],
             "busy": 0,  # 进行中的轮次数（>0 时拒绝回滚；进程内易失态，不入库）
         }
         _SESSIONS[sess["id"]] = sess
@@ -340,6 +351,8 @@ def rewind(session_id, keep_users):
             raise SessionMissing()
         if int(s.get("busy", 0)) > 0:
             raise SessionBusy()
+        if s.get("submitted"):
+            raise RewindInvalid()  # 已通过申报 MCP 入库，不能再回滚对话
         try:
             keep_users = int(keep_users)
         except (TypeError, ValueError):
@@ -461,15 +474,37 @@ def _body_is_zero_or_already_scored(body, sess):
     return False
 
 
-def run_turn(session_id, user_text, image_paths=None):
-    """执行一轮问答，产出 SSE 事件 dict（delta/add/done）。
+def run_turn(session_id, user_text, image_paths=None, state_items=None):
+    """执行一轮问答，产出 SSE 事件 dict（reasoning/delta/add/tool_call/tool_result/done）。
     支持本轮附带图片（image_paths：本地临时图片路径列表），随文字一起发给 AI 识别。
+    state_items：前端当前确认的加分项（含服务端证据名），作为「申报 MCP」的权威提交列表。
     done 之后允许一次「补充对话」，该轮结束即 ended，不再接受新消息。"""
     sess = get(session_id)
     if not sess:
         raise RuntimeError("会话不存在或已过期，请重新开始")
     if sess.get("ended"):
         raise RuntimeError("会话已结束，如需继续请重新开始")
+    # 同步前端当前列表（含手动增删改），保证工具提交的列表与学生看到的一致
+    if isinstance(state_items, list):
+        cleaned = []
+        for it in state_items[:30]:
+            if not isinstance(it, dict):
+                continue
+            category = str(it.get("category", "")).strip()
+            if category not in CAP:
+                continue
+            try:
+                points = float(it.get("points", 0))
+            except (TypeError, ValueError):
+                points = 0.0
+            points = round(max(0.0, min(points, CAP[category])), 1)
+            basis = str(it.get("basis", "")).strip()[:500]
+            if not basis:
+                continue
+            evidence = [str(x) for x in (it.get("evidence") or []) if isinstance(x, str)][:10]
+            cleaned.append({"category": category, "points": points, "basis": basis, "evidence": evidence})
+        with _LOCK:
+            sess["items"] = cleaned
     was_done = sess["done"]
     user_text = (user_text or "").strip()[:500]
     if image_paths and not user_text:
@@ -549,9 +584,15 @@ def run_turn(session_id, user_text, image_paths=None):
         messages.append({"role": "user", "content": parts})
     body_parts = []
     try:
-        for delta in ai.stream_chat(messages, cfg):
-            body_parts.append(delta)
-            yield {"type": "delta", "text": delta}
+        # 不再给模型挂 tools：申报统一由工作流在「解析出加分项 / 学生确认提交」时调用 MCP，
+        # 模型生成工单的过程就是触发工具调用的过程；这样即使模型不支持 function calling，
+        # 工具调用卡片也一定能显示出来。
+        for ev in ai.stream_chat_events(messages, cfg):
+            if ev["type"] == "reasoning":
+                yield {"type": "reasoning", "text": ev["text"]}
+            elif ev["type"] == "content":
+                body_parts.append(ev["text"])
+                yield {"type": "delta", "text": ev["text"]}
     except (RuntimeError, OSError, KeyError, json.JSONDecodeError) as e:
         yield {"type": "error", "text": f"请求失败：{e}"}
         return
@@ -598,6 +639,41 @@ def run_turn(session_id, user_text, image_paths=None):
             blocked_dup = True
             continue
         new_items.append({"category": category, "points": points, "basis": basis})
+
+    # 模型生成工单（本轮新增加分项）→ 调用「申报 MCP」stage，放入会话暂存队列。
+    # 这样工具调用卡片与模型产出严格对应；最终提交再由工作流/学生确认触发 mode=submit。
+    if new_items:
+        stage_id = f"stage_{uuid.uuid4().hex[:16]}"
+        yield {
+            "type": "tool_call",
+            "id": stage_id,
+            "name": "申报 MCP",
+            "tool": "submit_application",
+            "arguments": {"mode": "stage", "count": len(new_items)},
+            "status": "running",
+        }
+        stage_ctx = {
+            "sid": sess["sid"],
+            "class_id": sess.get("class_id", ""),
+            "semester_id": sess.get("semester_id", ""),
+            "items": list(sess["items"]),
+            "folder": sess.get("folder", ""),
+            "allowed_evidence": [
+                f for it in new_items for f in (it.get("evidence") or []) if isinstance(f, str)
+            ],
+        }
+        stage_result = mcp_apply.call_tool_internal(
+            "submit_application", {"mode": "stage", "items": new_items}, stage_ctx
+        )
+        yield {
+            "type": "tool_result",
+            "id": stage_id,
+            "name": "申报 MCP",
+            "ok": bool(stage_result.get("ok")),
+            "text": mcp_apply.tool_result_text(stage_result),
+            "result": stage_result,
+        }
+        new_items = stage_result.get("staged_items") or []
 
     # 进度台账更新：sections_done 与白名单求并集（防某轮漏报导致进度回退；推进只向前），
     # notes 整体替换为当轮最新清单（已核定的事项由模型移除）
@@ -646,6 +722,8 @@ def run_turn(session_id, user_text, image_paths=None):
         "type": "done",
         "done": sess["done"],
         "ended": sess.get("ended", False),
+        "submitted": bool(sess.get("submitted")),
+        "submitted_ids": list(sess.get("submitted_ids") or []),
         "items": list(sess["items"]),
         "progress": {"done": len(ledger["sections_done"]), "total": len(SECTIONS)},
         "text": None if new_items or not body else "",

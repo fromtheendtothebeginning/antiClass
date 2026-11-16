@@ -48,6 +48,9 @@ FUND_FIELDS = ("id", "class_id", "kind", "amount", "title", "evidence", "created
 SEMESTER_LABELS = ["大一上", "大一下", "大二上", "大二下", "大三上", "大三下", "大四上", "大四下"]
 DEFAULT_SEMESTER = {"label": "大一下", "term": "25-26下学期"}
 
+# 邀请码字符表：去掉 0/O/1/I 等易混字符，8 位足够防猜
+INVITE_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
+
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS students (
     semester_id CHAR(32) NOT NULL DEFAULT '',
@@ -143,6 +146,30 @@ CREATE TABLE IF NOT EXISTS admins (
     nickname VARCHAR(32) NOT NULL DEFAULT '',
     avatar MEDIUMTEXT,
     created_at DATETIME NOT NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+CREATE TABLE IF NOT EXISTS invites (
+    id CHAR(32) PRIMARY KEY,
+    code VARCHAR(16) NOT NULL UNIQUE,
+    class_id CHAR(32) NOT NULL,
+    created_by VARCHAR(32) NOT NULL DEFAULT '',
+    created_at DATETIME NOT NULL,
+    used_by VARCHAR(32) NULL,
+    used_at DATETIME NULL,
+    revoked TINYINT(1) NOT NULL DEFAULT 0
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+CREATE TABLE IF NOT EXISTS mcp_tokens (
+    id CHAR(32) PRIMARY KEY,
+    token_hash CHAR(64) NOT NULL UNIQUE,
+    token_prefix VARCHAR(16) NOT NULL,
+    class_id CHAR(32) NOT NULL,
+    label VARCHAR(64) NOT NULL DEFAULT '',
+    created_by VARCHAR(32) NOT NULL DEFAULT '',
+    created_at DATETIME NOT NULL,
+    last_used_at DATETIME NULL,
+    revoked TINYINT(1) NOT NULL DEFAULT 0,
+    INDEX idx_mcp_tokens_class (class_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 CREATE TABLE IF NOT EXISTS drafts (
@@ -443,6 +470,50 @@ def insert_awards(records):
             )
 
 
+def insert_awards_dedup(records, sid, class_id, semester_id):
+    """单事务内按学生行锁串行化，按 栏目+分值+依据 去重后插入待审批申报。
+
+    用于 MCP/一遍过提交：外部 MCP 并发调用、页面双击/重试都只会落一条。
+    已通过/待审批的同项跳过；已驳回的允许重新提交。
+    返回 (created_records, skipped)。
+    """
+    created = []
+    skipped = 0
+    with tx() as cur:
+        # 锁定该学生行：同学生的并发提交在此排队，后到的事务能看到先到者已插入的记录
+        cur.execute(
+            "SELECT 1 FROM students WHERE sid=%s AND class_id=%s AND semester_id=%s FOR UPDATE",
+            (sid, class_id, semester_id),
+        )
+        cur.execute(
+            "SELECT category, points, basis FROM awards "
+            "WHERE sid=%s AND class_id=%s AND semester_id=%s AND approved IN ('是','否') FOR UPDATE",
+            (sid, class_id, semester_id),
+        )
+        keys = {
+            (r["category"], round(float(r["points"]), 1), (r["basis"] or "").strip())
+            for r in cur.fetchall()
+        }
+        for r in records:
+            key = (r["category"], round(float(r["points"]), 1), (r["basis"] or "").strip())
+            if key in keys:
+                skipped += 1
+                continue
+            keys.add(key)
+            cur.execute(
+                "INSERT INTO awards (id,sid,name,class_id,semester_id,category,points,basis,evidence,folder,approved,reject_reason,created_at) "
+                "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
+                (
+                    r["id"], r["sid"], r["name"], r.get("class_id", ""), r.get("semester_id", ""),
+                    r["category"], round(float(r["points"]), 1),
+                    r["basis"], json.dumps(r["evidence"], ensure_ascii=False), r["folder"],
+                    r["approved"], r.get("reject_reason", "") or "", r["created_at"],
+                ),
+            )
+            created.append(r)
+    return created, skipped
+
+
 def list_awards(class_id=None, semester_id=None):
     where, params = [], []
     if class_id:
@@ -560,6 +631,8 @@ def assess_upsert(sess):
         "done": bool(sess.get("done")),
         "ended": bool(sess.get("ended")),
         "turns": sess.get("turns", []),
+        "submitted": bool(sess.get("submitted")),
+        "submitted_ids": sess.get("submitted_ids", []),
     }
     with tx() as cur:
         cur.execute(
@@ -863,6 +936,8 @@ def delete_class(cid):
     with tx() as cur:
         cur.execute("DELETE FROM classes WHERE id=%s", (cid,))
         cur.execute("DELETE FROM class_semesters WHERE class_id=%s", (cid,))
+        cur.execute("DELETE FROM invites WHERE class_id=%s", (cid,))
+        cur.execute("DELETE FROM mcp_tokens WHERE class_id=%s", (cid,))
 
 
 def clear_class_data(cid, semester_id):
@@ -1078,4 +1153,198 @@ def verify_admin(username, password):
     if hmac.compare_digest(admin["password_hash"], hash_password(password, admin["salt"])):
         return _row_admin(admin)
     return None
+
+
+# ---------- invites（邀请码：root 生成、绑定班级、一次性注册管理员） ----------
+
+def _row_invite(row):
+    result = {k: _plain(row[k]) for k in ("id", "code", "class_id", "created_by", "created_at", "used_by", "used_at")}
+    result["class_name"] = row.get("class_name") or ""
+    result["revoked"] = bool(row["revoked"])
+    result["status"] = "revoked" if row["revoked"] else ("used" if row["used_by"] else "unused")
+    return result
+
+
+def list_invites():
+    with tx() as cur:
+        cur.execute(
+            "SELECT i.*, c.name AS class_name FROM invites i "
+            "LEFT JOIN classes c ON c.id=i.class_id ORDER BY i.created_at DESC, i.id DESC"
+        )
+        return [_row_invite(r) for r in cur.fetchall()]
+
+
+def create_invite(class_id, created_by):
+    """生成一次性邀请码（8 位，绑定班级）。唯一冲突时重试，极端情况抛 RuntimeError。"""
+    with tx() as cur:
+        cur.execute("SELECT name FROM classes WHERE id=%s", (class_id,))
+        cls = cur.fetchone()
+        if not cls:
+            return None
+        for _ in range(8):
+            code = "".join(secrets.choice(INVITE_ALPHABET) for _ in range(8))
+            cur.execute("SELECT 1 FROM invites WHERE code=%s", (code,))
+            if cur.fetchone():
+                continue
+            iid = uuid.uuid4().hex
+            now = datetime.now()
+            cur.execute(
+                "INSERT INTO invites (id,code,class_id,created_by,created_at) VALUES (%s,%s,%s,%s,%s)",
+                (iid, code, class_id, created_by, now),
+            )
+            return {
+                "id": iid, "code": code, "class_id": class_id, "class_name": cls["name"],
+                "created_by": created_by, "created_at": now.isoformat(timespec="seconds"),
+                "used_by": None, "used_at": None, "revoked": False, "status": "unused",
+            }
+    raise RuntimeError("生成邀请码失败，请重试")
+
+
+def revoke_invite(iid):
+    """撤销未使用的邀请码；已使用/已撤销的返回 False（保留使用记录）。"""
+    with tx() as cur:
+        cur.execute(
+            "UPDATE invites SET revoked=1 WHERE id=%s AND used_by IS NULL AND revoked=0",
+            (iid,),
+        )
+        return cur.rowcount > 0
+
+
+def register_with_invite(code, username, password):
+    """用邀请码注册管理员：单事务内锁定邀请码 → 校验 → 建账号 → 标记已使用。
+
+    返回 (admin_dict, error)。error 取值：invalid（无效/已用/已撤销）、exists（用户名已被占用）、
+    no_class（邀请码对应班级已被删除）。
+    """
+    salt = secrets.token_hex(16)
+    try:
+        with tx() as cur:
+            cur.execute("SELECT * FROM invites WHERE code=%s FOR UPDATE", (code,))
+            inv = cur.fetchone()
+            if not inv or inv["revoked"] or inv["used_by"]:
+                return None, "invalid"
+            cur.execute("SELECT 1 FROM admins WHERE username=%s", (username,))
+            if cur.fetchone():
+                return None, "exists"
+            cur.execute("SELECT name FROM classes WHERE id=%s", (inv["class_id"],))
+            cls = cur.fetchone()
+            if not cls:
+                return None, "no_class"
+            now = datetime.now()
+            cur.execute(
+                "INSERT INTO admins (username,salt,password_hash,role,class_id,created_at) VALUES (%s,%s,%s,'admin',%s,%s)",
+                (username, salt, hash_password(password, salt), inv["class_id"], now),
+            )
+            cur.execute(
+                "UPDATE invites SET used_by=%s, used_at=%s WHERE id=%s",
+                (username, now, inv["id"]),
+            )
+            return {
+                "username": username,
+                "role": "admin",
+                "class_id": inv["class_id"],
+                "class_name": cls["name"],
+                "nickname": "",
+            }, None
+    except pymysql.err.IntegrityError:
+        # 并发注册同名账号：唯一键兜底
+        return None, "exists"
+
+
+# ---------- mcp_tokens（申报 MCP 专属 token：各班管理员生成/发放，绑定班级） ----------
+
+MCP_TOKEN_PREFIX = "mcp_"
+
+
+def _row_mcp_token(row):
+    result = {
+        k: _plain(row[k])
+        for k in ("id", "token_prefix", "class_id", "label", "created_by", "created_at", "last_used_at", "revoked")
+    }
+    result["class_name"] = row.get("class_name") or ""
+    result["revoked"] = bool(row["revoked"])
+    return result
+
+
+def list_mcp_tokens(class_id=None):
+    with tx() as cur:
+        sql = (
+            "SELECT t.*, c.name AS class_name FROM mcp_tokens t "
+            "LEFT JOIN classes c ON c.id=t.class_id"
+        )
+        params = ()
+        if class_id:
+            sql += " WHERE t.class_id=%s"
+            params = (class_id,)
+        sql += " ORDER BY t.created_at DESC, t.id DESC"
+        cur.execute(sql, params)
+        return [_row_mcp_token(r) for r in cur.fetchall()]
+
+
+def get_mcp_token(tid):
+    with tx() as cur:
+        cur.execute(
+            "SELECT t.*, c.name AS class_name FROM mcp_tokens t "
+            "LEFT JOIN classes c ON c.id=t.class_id WHERE t.id=%s",
+            (tid,),
+        )
+        row = cur.fetchone()
+    return _row_mcp_token(row) if row else None
+
+
+def create_mcp_token(class_id, label, created_by):
+    """生成专属 MCP token；明文只返回一次，库里只存 sha256 哈希与展示前缀。"""
+    token = MCP_TOKEN_PREFIX + secrets.token_hex(16)
+    token_hash = hashlib.sha256(token.encode("utf-8")).hexdigest()
+    prefix = token[:12]
+    iid = uuid.uuid4().hex
+    now = datetime.now()
+    with tx() as cur:
+        cur.execute(
+            "INSERT INTO mcp_tokens (id,token_hash,token_prefix,class_id,label,created_by,created_at,revoked) "
+            "VALUES (%s,%s,%s,%s,%s,%s,%s,0)",
+            (iid, token_hash, prefix, class_id, label, created_by, now),
+        )
+    return token, {
+        "id": iid, "token_prefix": prefix, "class_id": class_id, "label": label,
+        "created_by": created_by, "created_at": now.isoformat(timespec="seconds"),
+        "last_used_at": None, "revoked": False,
+    }
+
+
+def revoke_mcp_token(tid, class_id=None):
+    """撤销 token；admin 只能撤销本班，root 不限（class_id=None 表示 root）。"""
+    with tx() as cur:
+        if class_id:
+            cur.execute(
+                "UPDATE mcp_tokens SET revoked=1 WHERE id=%s AND class_id=%s AND revoked=0",
+                (tid, class_id),
+            )
+        else:
+            cur.execute("UPDATE mcp_tokens SET revoked=1 WHERE id=%s AND revoked=0", (tid,))
+        return cur.rowcount > 0
+
+
+def verify_mcp_token(token):
+    """校验专属 MCP token；成功时刷新 last_used_at 并返回班级范围会话。"""
+    token = (token or "").strip()
+    if not token.startswith(MCP_TOKEN_PREFIX):
+        return None
+    token_hash = hashlib.sha256(token.encode("utf-8")).hexdigest()
+    with tx() as cur:
+        cur.execute(
+            "SELECT * FROM mcp_tokens WHERE token_hash=%s AND revoked=0",
+            (token_hash,),
+        )
+        row = cur.fetchone()
+        if not row:
+            return None
+        cur.execute("UPDATE mcp_tokens SET last_used_at=%s WHERE id=%s", (datetime.now(), row["id"]))
+        return {
+            "role": "admin",
+            "class_id": row["class_id"],
+            "username": row["created_by"] or "mcp",
+            "token_id": row["id"],
+            "token_label": row["label"],
+        }
 

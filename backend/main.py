@@ -14,7 +14,7 @@ from fastapi.staticfiles import StaticFiles
 
 import db
 import drafts
-from routers import ai_admin, appearance, assess, auth, awards, board, feedback, funds, manage
+from routers import ai_admin, appearance, assess, auth, awards, board, feedback, funds, manage, mcp
 from scoring import parse_xlsx
 
 BASE_DIR = Path(__file__).resolve().parent
@@ -47,6 +47,7 @@ app.include_router(awards.router)
 app.include_router(ai_admin.router)
 app.include_router(feedback.router)
 app.include_router(funds.router)
+app.include_router(mcp.router)
 
 
 def _read_json_legacy(path):

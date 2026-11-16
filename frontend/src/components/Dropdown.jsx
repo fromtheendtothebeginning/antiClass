@@ -26,7 +26,9 @@ export default function Dropdown({ value, onChange, options = [], placeholder = 
   return (
     <div className={`nav-dropdown category-dropdown ${open ? "mobile-open" : ""}`} onClick={(e) => e.stopPropagation()}>
       <button type="button" className="category-btn" onClick={toggle}>
-        {options.find((o) => o.value === value)?.label || value || placeholder}
+        <span className="category-label">
+          {options.find((o) => o.value === value)?.label || value || placeholder}
+        </span>
         <span className="arrow-down">▾</span>
       </button>
       <div className="nav-dropdown-menu">

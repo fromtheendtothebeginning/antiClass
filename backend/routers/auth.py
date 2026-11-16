@@ -27,13 +27,17 @@ class ProfileBody(BaseModel):
     avatar: str | None = None  # None=不变，""=清除，data URL=替换
 
 
-@router.post("/api/login")
-def login(body: LoginBody, request: Request):
-    ip = request.client.host if request.client else "unknown"
-    rate_limit(f"login:{ip}", 5, 60)
-    admin = db.verify_admin(body.username.strip(), body.password)
-    if not admin:
-        raise HTTPException(status_code=401, detail="账号或密码错误")
+class RegisterBody(BaseModel):
+    code: str
+    username: str
+    password: str
+
+
+USERNAME_RE = re.compile(r"[A-Za-z0-9_]{3,32}")
+
+
+def _issue_session(admin):
+    """创建登录会话（登录与邀请码注册共用）。"""
     token = secrets.token_hex(16)
     TOKENS[token] = {
         "username": admin["username"],
@@ -41,12 +45,54 @@ def login(body: LoginBody, request: Request):
         "class_id": admin.get("class_id"),
         "exp": time.time(),
     }
+    return token
+
+
+@router.post("/api/login")
+def login(body: LoginBody, request: Request):
+    ip = request.client.host if request.client else "unknown"
+    rate_limit(f"login:{ip}", 5, 60)
+    admin = db.verify_admin(body.username.strip(), body.password)
+    if not admin:
+        raise HTTPException(status_code=401, detail="账号或密码错误")
+    token = _issue_session(admin)
     return {
         "token": token,
         "username": admin["username"],
         "role": admin["role"],
         "class_id": admin.get("class_id"),
         "nickname": admin.get("nickname", ""),
+    }
+
+
+@router.post("/api/register")
+def register(body: RegisterBody, request: Request):
+    """凭一次性邀请码注册管理员账号：班级由邀请码决定，注册成功直接返回登录会话。"""
+    ip = request.client.host if request.client else "unknown"
+    rate_limit(f"register:{ip}", 10, 3600)
+    code = body.code.strip().upper()
+    username = body.username.strip()
+    if not code:
+        raise HTTPException(status_code=400, detail="请输入邀请码")
+    if not USERNAME_RE.fullmatch(username) or username == "root":
+        raise HTTPException(status_code=400, detail="用户名限 3-32 位字母/数字/下划线，且不能与已有账号重复")
+    if len(body.password) < 6:
+        raise HTTPException(status_code=400, detail="密码至少 6 位")
+    admin, err = db.register_with_invite(code, username, body.password)
+    if err == "invalid":
+        raise HTTPException(status_code=400, detail="邀请码无效、已被使用或已撤销，请联系管理员")
+    if err == "exists":
+        raise HTTPException(status_code=400, detail="用户名已存在，请换一个")
+    if err == "no_class":
+        raise HTTPException(status_code=400, detail="邀请码对应的班级已被删除，请联系管理员")
+    token = _issue_session(admin)
+    return {
+        "token": token,
+        "username": admin["username"],
+        "role": admin["role"],
+        "class_id": admin["class_id"],
+        "nickname": "",
+        "class_name": admin["class_name"],
     }
 
 

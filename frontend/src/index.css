@@ -187,6 +187,9 @@
 html {
   scroll-behavior: smooth;
   -webkit-tap-highlight-color: transparent;
+  /* 页面长短变化（榜单长表 ⇄ 申报短页）时始终预留滚动条宽度，
+     否则 .page 水平居中会随滚动条出现/消失左右跳 ~8px */
+  scrollbar-gutter: stable;
 }
 
 body {
@@ -857,6 +860,20 @@ button {
   color: var(--text-primary);
 }
 
+/* 页面标题行（标题 + 返回上个界面等右侧操作） */
+.page-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-bottom: 10px;
+}
+
+.page-head h2 {
+  margin-bottom: 0;
+}
+
 .panel h3 {
   font-size: 16px;
   font-weight: 600;
@@ -994,6 +1011,350 @@ button {
 
   .manage-list .ri-actions .btn {
     flex: 1;
+  }
+}
+
+/* ---------- 账号管理 · 邀请码 ---------- */
+.invite-create {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin: 12px 0 14px;
+}
+
+.invite-create .category-dropdown {
+  align-self: center;
+}
+
+.invite-create .primary-btn {
+  margin-top: 0;
+}
+
+.invite-code {
+  font-family: var(--font-mono, ui-monospace, SFMono-Regular, Menlo, Consolas, monospace);
+  font-size: 16px;
+  font-weight: 600;
+  letter-spacing: 0.14em;
+  color: var(--accent-2);
+  user-select: all;
+}
+
+.mcp-endpoint {
+  word-break: break-all;
+  color: var(--accent-2);
+  user-select: all;
+}
+
+/* 申报 MCP 专属 token */
+.mcp-token-value {
+  display: block;
+  margin: 10px 0;
+  padding: 12px 14px;
+  border: 1px solid var(--accent-2-border);
+  border-radius: 10px;
+  background: var(--bg-elevated);
+  color: var(--accent-2);
+  font-family: var(--font-mono, ui-monospace, SFMono-Regular, Menlo, Consolas, monospace);
+  font-size: 13px;
+  line-height: 1.6;
+  word-break: break-all;
+  user-select: all;
+}
+
+.mcp-token-prefix {
+  font-family: var(--font-mono, ui-monospace, SFMono-Regular, Menlo, Consolas, monospace);
+  color: var(--accent-2);
+  user-select: all;
+}
+
+/* ---------- Token 生成后的弹窗（成功态 + 保存 + CC Switch 导入） ---------- */
+.token-created {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.token-created-banner {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 12px 14px;
+  border: 1px solid var(--accent-2-border);
+  border-radius: 14px;
+  background: var(--accent-2-soft);
+}
+
+.token-created-check {
+  flex: 0 0 30px;
+  width: 30px;
+  height: 30px;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  background: var(--accent-2);
+  color: #2b1e05;
+  font-size: 16px;
+  font-weight: 700;
+}
+
+.modal-sheet .token-created-banner strong {
+  font-size: 14px;
+  color: var(--text-primary);
+}
+
+.modal-sheet .token-created-banner p {
+  margin: 2px 0 0;
+  font-size: 12.5px;
+  line-height: 1.55;
+  color: var(--text-secondary);
+}
+
+.token-created-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.1fr) minmax(0, 0.9fr);
+  gap: 12px;
+}
+
+.token-created-card {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-width: 0;
+  padding: 14px;
+  border: 1px solid var(--border-color);
+  border-radius: 14px;
+  background: var(--bg-elevated);
+}
+
+.token-created-label {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-secondary);
+}
+
+.token-created-label .hint {
+  font-weight: 400;
+}
+
+.modal-sheet .token-created-card p {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+.token-created-card .mcp-token-value {
+  margin: 0;
+  font-size: 12.5px;
+}
+
+.token-created-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.token-created-actions .primary-btn {
+  margin-top: 0;
+}
+
+.token-created-meta {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 0;
+}
+
+.token-created-meta > div {
+  display: flex;
+  gap: 8px;
+  font-size: 12px;
+}
+
+.token-created-meta dt {
+  flex: 0 0 56px;
+  color: var(--text-muted);
+}
+
+.token-created-meta dd {
+  margin: 0;
+  color: var(--text-secondary);
+  word-break: break-all;
+}
+
+.token-created-card .category-dropdown {
+  width: 100%;
+}
+
+.token-created-card .category-btn {
+  width: 100%;
+  justify-content: space-between;
+}
+
+/* 收起状态的下拉菜单不要参与布局：绝对定位的隐藏菜单会撑大 modal-body 的 scrollHeight，
+   导致内容明明放得下也出现滚动条 */
+.token-created-card .nav-dropdown:not(:hover):not(.mobile-open) .nav-dropdown-menu {
+  display: none;
+}
+
+.token-import-btn {
+  width: 100%;
+  margin-top: 0;
+}
+
+.token-steps {
+  margin: 0;
+  padding-left: 18px;
+  color: var(--text-muted);
+  font-size: 12px;
+  line-height: 1.7;
+}
+
+.modal-sheet .token-security {
+  margin: 0;
+  padding: 10px 12px;
+  border: 1px solid var(--danger-border);
+  border-radius: 10px;
+  background: var(--danger-soft);
+  color: var(--danger);
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+/* Token 成功弹窗：让内容按自然高度撑开（避免内容明明放得下却出现内部滚动条），
+   底部「我已保存」收成右对齐的普通按钮，而不是通栏主按钮 */
+.modal-sheet.token-created-sheet .modal-body {
+  flex: 0 0 auto;
+}
+
+.modal-sheet.token-created-sheet .modal-actions {
+  justify-content: flex-end;
+}
+
+.modal-sheet.token-created-sheet .modal-actions .btn {
+  flex: 0 0 auto;
+  padding: 10px 26px;
+}
+
+@media (max-width: 768px) {
+  .token-created-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* 账号管理 · 申报 MCP 接口说明 */
+.mcp-spec {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 10px 0 12px;
+}
+
+.mcp-spec-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  flex-wrap: wrap;
+  font-size: 13px;
+  color: var(--text-secondary);
+}
+
+.mcp-spec-key {
+  flex: 0 0 44px;
+  font-size: 12.5px;
+  color: var(--text-muted);
+}
+
+.mcp-spec-row code {
+  word-break: break-all;
+}
+
+.mcp-spec-row .btn {
+  margin-left: auto;
+}
+
+.mcp-doc {
+  margin-top: 8px;
+  border: 1px solid var(--border-color);
+  border-radius: 10px;
+  background: var(--bg-elevated);
+  overflow: hidden;
+}
+
+.mcp-doc > summary {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 11px;
+  cursor: pointer;
+  list-style: none;
+  font-size: 13px;
+  color: var(--text-secondary);
+  user-select: none;
+}
+
+.mcp-doc > summary::-webkit-details-marker {
+  display: none;
+}
+
+.mcp-doc > summary::before {
+  content: "▸";
+  font-size: 11px;
+  color: var(--text-muted);
+  transition: transform 0.2s ease;
+}
+
+.mcp-doc[open] > summary::before {
+  transform: rotate(90deg);
+}
+
+.mcp-doc-body {
+  padding: 0 11px 11px;
+  border-top: 1px solid var(--border-color);
+}
+
+.mcp-pre {
+  max-height: 280px;
+  margin: 8px 0;
+  padding: 10px;
+  overflow: auto;
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  background: var(--bg-card);
+  font-family: var(--font-mono, ui-monospace, SFMono-Regular, Menlo, Consolas, monospace);
+  font-size: 11.5px;
+  line-height: 1.55;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.mcp-doc-actions {
+  display: flex;
+  justify-content: flex-end;
+}
+
+@media (max-width: 768px) {
+  .mcp-spec-key {
+    flex-basis: 100%;
+  }
+
+  .mcp-spec-row .btn {
+    margin-left: 0;
+  }
+}
+
+@media (max-width: 768px) {
+  .invite-create .category-dropdown,
+  .invite-create .primary-btn {
+    flex: 1 1 100%;
+  }
+
+  .invite-code {
+    font-size: 15px;
   }
 }
 
@@ -1462,6 +1823,166 @@ button {
 .chat-bubble .chat-md blockquote { font-size: 0.95em; margin: 6px 0; }
 .chat-bubble .chat-md strong { color: var(--accent-1); }
 
+/* ---------- 一遍过：思考过程（默认折叠）+ 申报 MCP 工具调用卡片 ---------- */
+.chat-think {
+  margin: 0 0 8px;
+  border: 1px solid var(--border-color);
+  border-radius: 10px;
+  background: var(--bg-elevated);
+  font-size: 12.5px;
+  overflow: hidden;
+}
+
+.chat-think > summary {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 10px;
+  cursor: pointer;
+  color: var(--text-muted);
+  list-style: none;
+  user-select: none;
+}
+
+.chat-think > summary::-webkit-details-marker {
+  display: none;
+}
+
+.chat-think > summary::before {
+  content: "▸";
+  font-size: 11px;
+  transition: transform 0.2s ease;
+}
+
+.chat-think[open] > summary::before {
+  transform: rotate(90deg);
+}
+
+.chat-think-len {
+  margin-left: auto;
+  font-size: 11px;
+  opacity: 0.8;
+}
+
+.chat-think-body {
+  max-height: 260px;
+  overflow: auto;
+  padding: 8px 10px 10px;
+  border-top: 1px solid var(--border-color);
+  white-space: pre-wrap;
+  line-height: 1.65;
+  color: var(--text-secondary);
+}
+
+.chat-tools {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 0 0 8px;
+}
+
+.chat-tool {
+  padding: 9px 11px;
+  border: 1px solid var(--border-color);
+  border-radius: 12px;
+  background: var(--bg-elevated);
+  font-size: 12.5px;
+}
+
+.chat-tool.success {
+  border-color: var(--accent-2-border);
+}
+
+.chat-tool.error {
+  border-color: var(--danger);
+}
+
+.chat-tool-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.chat-tool-badge {
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: var(--accent-2-soft);
+  color: var(--accent-2);
+  font-size: 11.5px;
+  font-weight: 600;
+}
+
+.chat-tool-name {
+  font-family: var(--font-mono, ui-monospace, SFMono-Regular, Menlo, Consolas, monospace);
+  font-size: 11.5px;
+  color: var(--text-muted);
+}
+
+.chat-tool-status {
+  margin-left: auto;
+  font-size: 11.5px;
+}
+
+.chat-tool-status.running {
+  color: var(--accent-1);
+}
+
+.chat-tool-status.success {
+  color: var(--accent-2);
+}
+
+.chat-tool-status.error {
+  color: var(--danger);
+}
+
+.chat-tool-result {
+  margin: 6px 0 0;
+  line-height: 1.55;
+  color: var(--text-secondary);
+}
+
+.chat-tool-result.error {
+  color: var(--danger);
+}
+
+.chat-tool-items {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 6px;
+}
+
+.chat-tool-item {
+  padding: 2px 8px;
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  background: var(--bg-card);
+  color: var(--text-secondary);
+  font-size: 11.5px;
+}
+
+.chat-tool-args {
+  margin-top: 6px;
+}
+
+.chat-tool-args summary {
+  cursor: pointer;
+  color: var(--text-muted);
+  font-size: 11.5px;
+}
+
+.chat-tool-args pre {
+  max-height: 180px;
+  margin: 6px 0 0;
+  padding: 8px;
+  overflow: auto;
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  background: var(--bg-card);
+  font-size: 11px;
+}
+
 .chat-actions {
   display: flex;
   gap: 8px;
@@ -1633,6 +2154,14 @@ button {
   font-size: 10px;
   margin-left: 4px;
   transition: transform 0.25s ease;
+}
+
+/* 下拉文案包一层 span：固定宽度场景下可省略号截断（学期槽位） */
+.category-btn .category-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .nav-dropdown:hover .category-btn .arrow-down,
@@ -2540,6 +3069,31 @@ button {
   transform: translateX(4px);
 }
 
+/* 登录弹窗底部的「有邀请码？注册管理员」/「返回登录」文字按钮 */
+.login-register-link {
+  align-self: center;
+  padding: 6px 10px;
+  border: 0;
+  background: none;
+  color: var(--accent-1);
+  font-size: 13px;
+  cursor: pointer;
+  border-radius: 10px;
+  transition: background 0.2s ease, color 0.2s ease;
+}
+
+.login-register-link:hover {
+  background: var(--bg-elevated);
+  color: var(--accent-2);
+}
+
+/* 邀请码输入：等宽 + 拉开字距，便于核对易混字符 */
+.reg-code-input {
+  font-family: var(--font-mono, ui-monospace, SFMono-Regular, Menlo, Consolas, monospace);
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+
 /* 密码可见性切换：文字按钮内嵌输入框右侧（功能位，不用图标） */
 .login-pass-wrap {
   position: relative;
@@ -2871,11 +3425,22 @@ textarea.tf-input.mono {
   align-self: center;
 }
 
-/* ---------- 学期选择（奖学金二级 Tab 行左侧） ---------- */
+/* ---------- 学期选择（奖学金二级 Tab 行左侧） ----------
+   固定宽度槽位：学期名长短变化、或在申报页换成「申报学期：X」提示时，
+   后面的 GlassTabs 起点不移动（否则切换界面整排 Tab 会左右跳）。 */
+.semester-slot {
+  display: flex;
+  align-items: center;
+  flex: 0 0 260px;
+  min-width: 0;
+}
+
 .semester-bar {
   display: flex;
   align-items: center;
   gap: 8px;
+  width: 100%;
+  min-width: 0;
 }
 
 .semester-bar label,
@@ -2887,6 +3452,37 @@ textarea.tf-input.mono {
 .semester-bar .category-dropdown,
 .semester-create .category-dropdown {
   align-self: center;
+}
+
+.semester-bar .category-dropdown {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.semester-bar .category-btn {
+  width: 100%;
+  min-width: 0;
+  justify-content: flex-start;
+}
+
+.semester-bar .category-btn .category-label {
+  flex: 1 1 auto;
+  min-width: 0;
+  text-align: left;
+}
+
+.semester-hint {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+@media (max-width: 768px) {
+  /* 手机端：学期槽位独占一行，Tab 行照常换行 */
+  .semester-slot {
+    flex: 1 1 100%;
+  }
 }
 
 /* 数据管理 · 新增学期（下拉 + 学年学期输入 + 按钮横排） */

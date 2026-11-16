@@ -67,6 +67,9 @@ export default function ModelConfigPage({ai}) {
                         注册表模型：{aiMeta.providers.find((p) => p.id === aiForm.provider).models.map((m) => (m.vision ? `★${m.id}` : m.id)).join("、")}
                       </span>
                     )}
+                    <span className="file-count">
+                      一遍过的「思考过程」需要模型支持 reasoning；申报 MCP 由系统工作流调用，不依赖模型 function calling。
+                    </span>
                     <label>联网搜索源</label>
                     <GlassSelect
                       value={aiForm.searchProvider}

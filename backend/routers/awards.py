@@ -446,6 +446,26 @@ def approve_award(aid: str, body: ApproveBody, authorization: str = Header(defau
     field = CATEGORY_FIELD[category]
     cap = CATEGORY_CAP[category]
     points = round(min(max(points, 0.0), cap), 1)
+    # 重复通过拦截：同学生/栏目/分值/依据已经有一条「已通过」时不再加分（防历史重复记录加两次）
+    record_basis = (record.get("basis") or "").strip()
+    duplicate = next(
+        (
+            a
+            for a in db.list_awards(record["class_id"], record.get("semester_id"))
+            if a["id"] != aid
+            and a["sid"] == record["sid"]
+            and a["category"] == category
+            and a["approved"] == "是"
+            and abs(float(a["points"]) - float(points)) < 1e-6
+            and (a.get("basis") or "").strip() == record_basis
+        ),
+        None,
+    )
+    if duplicate:
+        raise HTTPException(
+            status_code=400,
+            detail="已存在相同已通过申报（同栏目+分值+依据），本次未重复加分；请删除重复记录后再处理",
+        )
     stu[field] = round(min(stu[field] + points, cap), 2)
     stu["total"] = calc_total(stu["deyu"], stu["score"], stu["tiyu"], stu["meiyu"], stu["laoyu"], stu["fujia"])
     db.update_student_score(stu["sid"], stu["class_id"], stu["semester_id"], field, stu[field], stu["total"])

@@ -281,20 +281,39 @@ def _chat(payload, cfg):
     return data["choices"][0]["message"]["content"]
 
 
-def stream_chat(messages, cfg):
-    """OpenAI 兼容流式对话：逐个 yield 文本增量（SSE data 行解析）。"""
+class ToolsUnsupported(RuntimeError):
+    """提供商不支持 tools 参数（400/404/422）；调用方可降级为无工具对话。"""
+
+
+def stream_chat_events(messages, cfg, tools=None):
+    """OpenAI 兼容流式对话：逐个 yield 结构化事件。
+
+    - {"type":"reasoning","text":...}  思考增量（DeepSeek reasoning_content / 兼容字段 reasoning）
+    - {"type":"content","text":...}    正文增量
+    - {"type":"tool_call_delta", index, id, name, arguments}  工具调用增量（OpenAI 格式）
+    - {"type":"finish","reason":...}   结束原因
+    """
     payload = {
         "model": cfg["model"],
         "messages": messages,
         "temperature": 0,
         "stream": True,
     }
+    if tools:
+        payload["tools"] = tools
+        payload["tool_choice"] = "auto"
     req = urllib.request.Request(
         cfg["base_url"].rstrip("/") + "/chat/completions",
         data=json.dumps(payload).encode("utf-8"),
         headers=_headers(cfg),
     )
-    with urllib.request.urlopen(req, timeout=240) as resp:
+    try:
+        resp = urllib.request.urlopen(req, timeout=240)
+    except urllib.error.HTTPError as e:
+        if tools and e.code in (400, 404, 422):
+            raise ToolsUnsupported(f"provider rejected tools (HTTP {e.code})")
+        raise
+    with resp:
         buffer = b""
         while True:
             chunk = resp.read(2048)
@@ -309,14 +328,49 @@ def stream_chat(messages, cfg):
                     continue
                 data = line[5:].strip()
                 if data == b"[DONE]":
+                    yield {"type": "finish", "reason": "stop"}
                     return
                 try:
                     obj = json.loads(data.decode("utf-8", "ignore"))
                 except json.JSONDecodeError:
                     continue
-                delta = (obj.get("choices") or [{}])[0].get("delta", {}).get("content")
-                if delta:
-                    yield delta
+                if isinstance(obj, dict) and obj.get("error"):
+                    raise RuntimeError(str(obj.get("error")))
+                choice = (obj.get("choices") or [{}])[0] if isinstance(obj, dict) else {}
+                delta = choice.get("delta") or {}
+                reasoning = delta.get("reasoning_content")
+                if not isinstance(reasoning, str):
+                    reasoning = delta.get("reasoning")
+                if isinstance(reasoning, str) and reasoning:
+                    yield {"type": "reasoning", "text": reasoning}
+                content = delta.get("content")
+                if isinstance(content, str) and content:
+                    yield {"type": "content", "text": content}
+                for tc in delta.get("tool_calls") or []:
+                    if not isinstance(tc, dict):
+                        continue
+                    fn = tc.get("function") or {}
+                    try:
+                        index = int(tc.get("index", 0))
+                    except (TypeError, ValueError):
+                        index = 0
+                    yield {
+                        "type": "tool_call_delta",
+                        "index": index,
+                        "id": tc.get("id") or "",
+                        "name": fn.get("name") or "",
+                        "arguments": fn.get("arguments") or "",
+                    }
+                finish_reason = choice.get("finish_reason")
+                if finish_reason:
+                    yield {"type": "finish", "reason": str(finish_reason)}
+
+
+def stream_chat(messages, cfg):
+    """兼容旧接口：只 yield 正文增量。"""
+    for event in stream_chat_events(messages, cfg):
+        if event["type"] == "content":
+            yield event["text"]
 
 
 def web_search(query, cfg):
