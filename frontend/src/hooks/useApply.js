@@ -3,7 +3,7 @@ import { useState } from "react";
 import { analyzeAward, submitAwards, deleteAwardDraft, manualAward, classCommitteeAward, adjustScores, batchAward } from "../api.js";
 import { CC_ROLES } from "../constants.js";
 
-export function useApply({ token, setError, setSubmitting, setSubmitMsg, loadAwards, loadBoard, classSel }) {
+export function useApply({ token, setError, setSubmitting, setSubmitMsg, loadAwards, loadBoard, classSel, semesterSel }) {
   const [applyType, setApplyType] = useState("ai");
   const [applySid, setApplySid] = useState("");
   const [applyText, setApplyText] = useState("");
@@ -169,16 +169,23 @@ export function useApply({ token, setError, setSubmitting, setSubmitMsg, loadAwa
       setError("请填写学号（支持正则）");
       return;
     }
+    if (!classSel || !semesterSel) {
+      setError("请先选择班级与学期");
+      return;
+    }
     setAdjBusy(true);
     setError("");
     setAdjResult(null);
     try {
       const data = await adjustScores(
-        { sids: adjSids, field: adjField, op: adjOp, points: parseFloat(adjPoints) || 0 },
+        {
+          sids: adjSids, field: adjField, op: adjOp, points: parseFloat(adjPoints) || 0,
+          class_id: classSel, semester_id: semesterSel,
+        },
         token
       );
       setAdjResult(data.changed);
-      await loadBoard(classSel);
+      await loadBoard(classSel, semesterSel);
     } catch (err) {
       setError(err.message);
     } finally {
@@ -226,6 +233,7 @@ export function useApply({ token, setError, setSubmitting, setSubmitMsg, loadAwa
           category: batchCategory,
           points: batchPoints || "0",
           basis: batchBasis,
+          semester_id: semesterSel,
           files: batchFiles
         },
         token

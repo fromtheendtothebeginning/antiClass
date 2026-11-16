@@ -183,6 +183,7 @@ def _load_locked(session_id):
         "sid": row["sid"],
         "name": row["name"],
         "class_id": row["class_id"],
+        "semester_id": row.get("semester_id") or "",
         "folder": row.get("folder") or "",
         "created": row["created_at"].timestamp(),
         "updated": time.time(),
@@ -197,7 +198,7 @@ def _load_locked(session_id):
     }
 
 
-def start(sid, name, class_id):
+def start(sid, name, class_id, semester_id):
     with _LOCK:
         _gc()
         _gc_db_locked()
@@ -205,10 +206,10 @@ def start(sid, name, class_id):
             # 挤掉最旧会话
             oldest = min(_SESSIONS, key=lambda k: _SESSIONS[k]["updated"])
             _SESSIONS.pop(oldest, None)
-        # 载入该生已存在的申报/加分记录（只读），用于防重复加分
+        # 载入该生已存在的申报/加分记录（只读），用于防重复加分（只看本学期的记录）
         existing = []
         try:
-            for a in db.list_awards(class_id or None):
+            for a in db.list_awards(class_id or None, semester_id or None):
                 if a.get("sid") == sid and a.get("approved") in ("是", "否", "驳回"):
                     existing.append(
                         {
@@ -225,6 +226,7 @@ def start(sid, name, class_id):
             "sid": sid,
             "name": name,
             "class_id": class_id,
+            "semester_id": semester_id,
             "folder": "",  # 会话证据目录（main.py 首次上传文件时创建并回填，uploads/{folder}）
             "created": time.time(),
             "updated": time.time(),

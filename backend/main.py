@@ -56,7 +56,7 @@ def _read_json_legacy(path):
         return None
 
 
-db.init_db()
+DEFAULT_SEMESTER_ID, SEMESTER_CREATED = db.init_db()
 
 # 账号播种：无超级管理员时创建 root（密码 ROOT_PASSWORD 环境变量，默认 root123）。
 # 按 role 判断而非固定用户名，保证超级管理员改名（如 root→end）后重启不会复活 root 后门。
@@ -75,15 +75,25 @@ with db.tx() as cur:
 if not db.get_admin("admin"):
     db.create_admin("admin", ADMIN_PASSWORD, "admin", FIRST_CLASS)
 
+# 老库第二课堂 meta 键补上默认学期（否则升级后首次重导会把 10 分再加一遍）
+if SEMESTER_CREATED:
+    db.migrate_secondclass_meta(DEFAULT_SEMESTER_ID)
+    # 老库的榜单数据就来自根目录这份 xlsx，记下它对应的学期供后续 failed 重算
+    if db.list_students(semester_id=DEFAULT_SEMESTER_ID) and not db.get_meta("seed_semester"):
+        db.set_meta("seed_semester", DEFAULT_SEMESTER_ID)
+
 # 一次性迁移：旧 JSON 数据与 AI 配置/提示词 → MySQL，迁完即删
-if not db.list_students():
+if not db.list_students(semester_id=DEFAULT_SEMESTER_ID):
     state = _read_json_legacy(DATA_DIR / "state.json")
     if state and state.get("students"):
-        db.replace_students(state["students"], FIRST_CLASS)
-        db.set_class_meta(FIRST_CLASS, state.get("rows", 0), state.get("source", ""))
+        db.replace_students(state["students"], FIRST_CLASS, DEFAULT_SEMESTER_ID)
+        db.set_class_meta(FIRST_CLASS, state.get("rows", 0), state.get("source", ""), DEFAULT_SEMESTER_ID)
 if not db.list_awards():
     awards = _read_json_legacy(DATA_DIR / "awards.json")
     if awards:
+        for a in awards:
+            a.setdefault("semester_id", DEFAULT_SEMESTER_ID)
+            a.setdefault("class_id", FIRST_CLASS)
         db.insert_awards(awards)
 if db.get_setting("ai_config") is None and LEGACY_AI_CONFIG.exists():
     cfg = _read_json_legacy(LEGACY_AI_CONFIG)
@@ -96,17 +106,22 @@ if db.get_setting("ai_prompts") is None and LEGACY_AI_PROMPTS.exists():
 for legacy in (DATA_DIR / "state.json", DATA_DIR / "awards.json", DATA_DIR / "adjust_log.json", LEGACY_AI_CONFIG, LEGACY_AI_PROMPTS):
     legacy.unlink(missing_ok=True)
 
-if not db.list_students() and DEFAULT_XLSX.exists():
+if SEMESTER_CREATED and not db.list_students(semester_id=DEFAULT_SEMESTER_ID) and DEFAULT_XLSX.exists():
+    # 仅首次引入学期（升级/全新库）时播种；之后清空榜单不会被重启自动复活
     students, rows = parse_xlsx(DEFAULT_XLSX)
-    db.replace_students(students, FIRST_CLASS)
-    db.set_class_meta(FIRST_CLASS, rows, DEFAULT_XLSX.name)
+    db.replace_students(students, FIRST_CLASS, DEFAULT_SEMESTER_ID)
+    db.set_class_meta(FIRST_CLASS, rows, DEFAULT_XLSX.name, DEFAULT_SEMESTER_ID)
+    db.set_meta("seed_semester", DEFAULT_SEMESTER_ID)  # 该 xlsx 对应的学期，供 failed 重算使用
 elif DEFAULT_XLSX.exists():
-    # 已存在学生数据：仅按源文件重算参评资格 failed 标记（不动分数/调分/附加分）
-    try:
-        students, _ = parse_xlsx(DEFAULT_XLSX)
-        db.update_failed_flags(FIRST_CLASS, {s["sid"]: s["failed"] for s in students})
-    except HTTPException:
-        pass
+    # 已存在学生数据：仅按源文件重算参评资格 failed 标记（不动分数/调分/附加分）。
+    # 只重算这份 xlsx 对应的学期，避免把大一下的挂科结果写到其它学期。
+    seed_sid = db.get_meta("seed_semester")
+    if seed_sid and db.get_semester(seed_sid):
+        try:
+            students, _ = parse_xlsx(DEFAULT_XLSX)
+            db.update_failed_flags(FIRST_CLASS, seed_sid, {s["sid"]: s["failed"] for s in students})
+        except HTTPException:
+            pass
 
 # 清理上次运行遗留的过期 AI 分析草稿（草稿已持久化到 MySQL，重启不再丢失）
 drafts.purge_expired()

@@ -61,14 +61,22 @@ class SubmitBody(BaseModel):
 def undo_award_points(record):
     if record["approved"] != "是":
         return False
-    stu = db.get_student(record["sid"])
+    stu = db.get_student(record["sid"], record.get("semester_id", ""), record.get("class_id", ""))
     if not stu:
         return False
     field = CATEGORY_FIELD[record["category"]]
     stu[field] = round(max(stu[field] - record["points"], 0.0), 2)
     stu["total"] = calc_total(stu["deyu"], stu["score"], stu["tiyu"], stu["meiyu"], stu["laoyu"], stu["fujia"])
-    db.update_student_score(record["sid"], stu["class_id"], field, stu[field], stu["total"])
+    db.update_student_score(record["sid"], stu["class_id"], stu["semester_id"], field, stu[field], stu["total"])
     return True
+
+
+def _open_semester_or_400():
+    """学生申报统一落到管理员设置的开放申报学期（同一时间只开放一个）。"""
+    sem = db.get_open_semester()
+    if not sem:
+        raise HTTPException(status_code=400, detail="当前没有开放申报的学期，请联系管理员")
+    return sem
 
 
 @router.post("/api/awards/analyze")
@@ -81,9 +89,10 @@ def analyze_award(
     ip = request.client.host if request and request.client else "unknown"
     rate_limit(f"analyze:{ip}", 10, 3600)
     sid = sid.strip()
-    stu = find_student(sid)
+    sem = _open_semester_or_400()
+    stu = find_student(sid, sem["id"])
     if not stu:
-        raise HTTPException(status_code=400, detail=f"学号 {sid} 不存在")
+        raise HTTPException(status_code=400, detail=f"当前开放申报学期（{sem['label']}）名单中没有学号 {sid}")
     if len(text) > MAX_TEXT_LEN:
         raise HTTPException(status_code=400, detail=f"申报描述过长（最多 {MAX_TEXT_LEN} 字）")
     if not is_configured():
@@ -146,6 +155,7 @@ def analyze_award(
             "sid": stu["sid"],
             "name": stu["name"],
             "class_id": stu.get("class_id", ""),
+            "semester_id": stu.get("semester_id", ""),
             "folder": folder,
             "items": draft_items,
             "evidence": sorted({f for it in draft_items for f in it["evidence"]}),
@@ -194,6 +204,7 @@ def submit_awards(request: Request, body: SubmitBody):
                     "sid": draft["sid"],
                     "name": draft["name"],
                     "class_id": draft.get("class_id", ""),
+                    "semester_id": draft.get("semester_id", ""),
                     "category": category,
                     "points": points,
                     "basis": it.basis,
@@ -211,8 +222,12 @@ def submit_awards(request: Request, body: SubmitBody):
 
 
 @router.get("/api/awards")
-def list_awards(class_id: str | None = None):
-    return {"awards": db.list_awards(class_id or None)}
+def list_awards(class_id: str | None = None, semester_id: str | None = None):
+    cid = (class_id or "").strip() or None
+    sem = (semester_id or "").strip() or None
+    if cid and not sem:
+        raise HTTPException(status_code=400, detail="缺少 semester_id：按班级查看申报时需指定学期")
+    return {"awards": db.list_awards(cid, sem)}
 
 
 @router.get("/api/awards/{aid}/evidence/{filename}")
@@ -251,9 +266,10 @@ def manual_award(
     ip = request.client.host if request and request.client else "unknown"
     rate_limit(f"manual:{ip}", 10, 3600)
     sid = sid.strip()
-    stu = find_student(sid)
+    sem = _open_semester_or_400()
+    stu = find_student(sid, sem["id"])
     if not stu:
-        raise HTTPException(status_code=400, detail=f"学号 {sid} 不存在")
+        raise HTTPException(status_code=400, detail=f"当前开放申报学期（{sem['label']}）名单中没有学号 {sid}")
     if category not in CATEGORY_FIELD:
         raise HTTPException(status_code=400, detail="加分栏目无效，可选：" + "、".join(CATEGORY_FIELD))
     if not basis.strip():
@@ -278,6 +294,7 @@ def manual_award(
         "sid": stu["sid"],
         "name": stu["name"],
         "class_id": stu.get("class_id", ""),
+        "semester_id": stu.get("semester_id", ""),
         "category": category,
         "points": points,
         "basis": basis.strip(),
@@ -301,9 +318,10 @@ def class_committee(
     ip = request.client.host if request and request.client else "unknown"
     rate_limit(f"committee:{ip}", 10, 3600)
     sid = sid.strip()
-    stu = find_student(sid)
+    sem = _open_semester_or_400()
+    stu = find_student(sid, sem["id"])
     if not stu:
-        raise HTTPException(status_code=400, detail=f"学号 {sid} 不存在")
+        raise HTTPException(status_code=400, detail=f"当前开放申报学期（{sem['label']}）名单中没有学号 {sid}")
     if role not in CLASS_ROLE_POINTS:
         raise HTTPException(status_code=400, detail="班委职务无效，可选：" + "、".join(CLASS_ROLE_POINTS))
     file_list = [f for f in (files or []) if f.filename][:MAX_FILES]
@@ -322,6 +340,7 @@ def class_committee(
         "sid": stu["sid"],
         "name": stu["name"],
         "class_id": stu.get("class_id", ""),
+        "semester_id": stu.get("semester_id", ""),
         "category": "德育",
         "points": CLASS_ROLE_POINTS[role],
         "basis": f"担任班级职务：{role}，任职满六个月，按评分办法德育·学生骨干类（班级档）加分",
@@ -341,19 +360,29 @@ def batch_award(
     category: str = Form(...),
     points: float = Form(0),
     basis: str = Form(""),
+    semester_id: str = Form(""),
     files: list[UploadFile] | None = File(default=None),
     authorization: str = Header(default=""),
 ):
     session = require_token(authorization)
+    sem = db.get_semester(semester_id.strip()) if semester_id.strip() else db.get_open_semester()
+    if not sem:
+        raise HTTPException(status_code=400, detail="请选择学期（当前也没有开放申报的学期）")
     if category not in CATEGORY_FIELD:
         raise HTTPException(status_code=400, detail="加分栏目无效，可选：" + "、".join(CATEGORY_FIELD))
     if len(basis) > MAX_TEXT_LEN:
         raise HTTPException(status_code=400, detail=f"加分依据过长（最多 {MAX_TEXT_LEN} 字）")
     raw_sids = re.split(r"[\s,，;；]+", sids.strip())
     sid_list = list(dict.fromkeys(s for s in raw_sids if s))
-    invalid = [s for s in sid_list if not find_student(s)]
+    # 管理员只能操作本班；root 不限。按学期+（管理员的）班级定位学生
+    scope_class = (session.get("class_id") or "") if session["role"] == "admin" else ""
+
+    def lookup(sid):
+        return find_student(sid, sem["id"], scope_class or None)
+
+    invalid = [s for s in sid_list if not lookup(s)]
     if invalid:
-        raise HTTPException(status_code=400, detail="学号不存在：" + "、".join(invalid))
+        raise HTTPException(status_code=400, detail="学号不在该学期名单：" + "、".join(invalid))
     file_list = [f for f in (files or []) if f.filename][:MAX_FILES]
     folder = uuid.uuid4().hex
     upload_dir = UPLOADS_DIR / folder
@@ -371,13 +400,14 @@ def batch_award(
     created = []
     now = datetime.now()
     for sid in sid_list:
-        stu = find_student(sid)
+        stu = lookup(sid)
         check_class_scope(session, stu.get("class_id", ""))
         record = {
             "id": uuid.uuid4().hex,
             "sid": stu["sid"],
             "name": stu["name"],
             "class_id": stu.get("class_id", ""),
+            "semester_id": stu.get("semester_id", ""),
             "category": category,
             "points": points,
             "basis": basis,
@@ -390,7 +420,7 @@ def batch_award(
         # 管理员批量申报自动通过：立即加分并重算总分，撤回/删除即撤销
         stu[field] = round(min(float(stu[field]) + points, cap), 2)
         stu["total"] = calc_total(stu["deyu"], stu["score"], stu["tiyu"], stu["meiyu"], stu["laoyu"], stu["fujia"])
-        db.update_student_score(stu["sid"], stu["class_id"], field, stu[field], stu["total"])
+        db.update_student_score(stu["sid"], stu["class_id"], stu["semester_id"], field, stu[field], stu["total"])
     db.insert_awards(created)
     for r in created:
         r["created_at"] = r["created_at"].isoformat(timespec="seconds")
@@ -410,15 +440,15 @@ def approve_award(aid: str, body: ApproveBody, authorization: str = Header(defau
     points = body.points if body.points is not None else record["points"]
     if category not in CATEGORY_FIELD:
         raise HTTPException(status_code=400, detail="加分栏目无效")
-    stu = db.get_student(record["sid"])
+    stu = db.get_student(record["sid"], record.get("semester_id", ""), record.get("class_id", ""))
     if not stu:
-        raise HTTPException(status_code=400, detail="学生不存在")
+        raise HTTPException(status_code=400, detail="该学期名单中找不到该学生")
     field = CATEGORY_FIELD[category]
     cap = CATEGORY_CAP[category]
     points = round(min(max(points, 0.0), cap), 1)
     stu[field] = round(min(stu[field] + points, cap), 2)
     stu["total"] = calc_total(stu["deyu"], stu["score"], stu["tiyu"], stu["meiyu"], stu["laoyu"], stu["fujia"])
-    db.update_student_score(stu["sid"], stu["class_id"], field, stu[field], stu["total"])
+    db.update_student_score(stu["sid"], stu["class_id"], stu["semester_id"], field, stu[field], stu["total"])
     db.update_award(aid, category=category, points=points, approved="是")
     record = db.get_award(aid)
     return {"ok": True, "award": record, "student": stu}

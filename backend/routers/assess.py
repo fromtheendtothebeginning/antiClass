@@ -40,12 +40,15 @@ def assess_start(sid: str = Form(...), request: Request = None):
     ip = request.client.host if request and request.client else "unknown"
     rate_limit(f"assess_start:{ip}", 10, 3600)
     sid = sid.strip()
-    stu = db.get_student(sid)
+    sem = db.get_open_semester()
+    if not sem:
+        raise HTTPException(status_code=400, detail="当前没有开放申报的学期，请联系管理员")
+    stu = db.get_student(sid, sem["id"])
     if not stu:
-        raise HTTPException(status_code=400, detail=f"学号 {sid} 不存在")
+        raise HTTPException(status_code=400, detail=f"当前开放申报学期（{sem['label']}）名单中没有学号 {sid}")
     if not is_configured():
         raise HTTPException(status_code=400, detail="AI 未配置，请在管理界面「AI 设置」填写 base_url/api_key/model")
-    sess = assess.start(stu["sid"], stu["name"], stu.get("class_id", ""))
+    sess = assess.start(stu["sid"], stu["name"], stu.get("class_id", ""), sem["id"])
     return {
         "session_id": sess["id"],
         "sid": sess["sid"],

@@ -4,7 +4,7 @@ import { evidenceUrl } from "../api.js";
 import { isImage } from "../utils/img.js";
 import { pinyinMatch } from "../utils/pinyin.js";
 
-export function useApproveFilters({ awards, classSel, tab }) {
+export function useApproveFilters({ awards, classSel, semesterSel, tab }) {
   const [awardQuery, setAwardQuery] = useState("");
   const [awardSuggestOpen, setAwardSuggestOpen] = useState(false);
   const [awardSuggestIdx, setAwardSuggestIdx] = useState(-1); // 键盘高亮项（替代原生 datalist 的方向键选择）
@@ -18,7 +18,7 @@ export function useApproveFilters({ awards, classSel, tab }) {
   // 筛选条件（关键词/栏目/状态）、班级或 Tab 变化时重置分批数量，避免切换后一次显示很长一截
   useEffect(() => {
     setVisibleCount(4);
-  }, [awardQuery, awardCategory, awardStatus, classSel, tab]);
+  }, [awardQuery, awardCategory, awardStatus, classSel, semesterSel, tab]);
 
   const awardQueryTrim = awardQuery.trim();
   const awardTokens = awardQueryTrim ? awardQueryTrim.split(/\s+/).filter(Boolean) : [];

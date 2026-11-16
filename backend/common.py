@@ -11,6 +11,8 @@ from pathlib import Path
 
 from fastapi import HTTPException
 
+import db
+
 BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 UPLOADS_DIR = DATA_DIR / "uploads"
@@ -127,5 +129,6 @@ def check_class_scope(session, class_id):
         raise HTTPException(status_code=403, detail="只能管理本班级的数据")
 
 
-def find_student(sid):
-    return db.get_student(sid)
+def find_student(sid, semester_id=None, class_id=None):
+    """按学号定位学生；多学期下必须带学期，否则同一学号会命中多个学期的记录。"""
+    return db.get_student(sid, semester_id, class_id)

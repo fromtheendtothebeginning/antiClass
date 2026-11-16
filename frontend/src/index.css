@@ -2871,6 +2871,40 @@ textarea.tf-input.mono {
   align-self: center;
 }
 
+/* ---------- 学期选择（奖学金二级 Tab 行左侧） ---------- */
+.semester-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.semester-bar label,
+.semester-hint {
+  font-size: 13px;
+  color: var(--text-muted);
+}
+
+.semester-bar .category-dropdown,
+.semester-create .category-dropdown {
+  align-self: center;
+}
+
+/* 数据管理 · 新增学期（下拉 + 学年学期输入 + 按钮横排） */
+.semester-create {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.semester-create .tf-input {
+  flex: 1 1 220px;
+}
+
+.semester-create .primary-btn {
+  margin-top: 0;
+}
+
 /* ---------- 横排（flex row）里的按钮 / 下拉与同行元素对齐 ----------
    .primary-btn 的 margin-top:14px、.category-dropdown 的 align-self:flex-start 都是给纵向表单排版定的，
    落到横排里会让元素上下错位（「查看榜单」「筛选下拉」「导出证据 zip」都踩过）；

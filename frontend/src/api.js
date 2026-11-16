@@ -78,12 +78,50 @@ export function saveAppearance(payload, token) {
   });
 }
 
-export function fetchLeaderboard(classId) {
-  return request(`/leaderboard${classId ? `?class_id=${encodeURIComponent(classId)}` : ""}`);
+export function fetchLeaderboard(classId, semesterId) {
+  const q = new URLSearchParams();
+  if (classId) q.set("class_id", classId);
+  if (semesterId) q.set("semester_id", semesterId);
+  return request(`/leaderboard${q.toString() ? `?${q}` : ""}`);
 }
 
-export function fetchClasses() {
-  return request("/classes");
+export function fetchClasses(semesterId) {
+  return request(`/classes${semesterId ? `?semester_id=${encodeURIComponent(semesterId)}` : ""}`);
+}
+
+// 学期（班级跨学期；同一时间只有一个学期开放申报）
+export function fetchSemesters() {
+  return request("/semesters");
+}
+
+export function createSemester(label, term, token) {
+  return request("/semesters", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+    body: JSON.stringify({ label, term })
+  });
+}
+
+export function updateSemesterTerm(id, term, token) {
+  return request(`/semesters/${id}`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+    body: JSON.stringify({ term })
+  });
+}
+
+export function openSemester(id, token) {
+  return request(`/semesters/${id}/open`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${token}` }
+  });
+}
+
+export function deleteSemester(id, token) {
+  return request(`/semesters/${id}`, {
+    method: "DELETE",
+    headers: { Authorization: `Bearer ${token}` }
+  });
 }
 
 export function createClass(name, token) {
@@ -101,8 +139,8 @@ export function deleteClass(id, token) {
   });
 }
 
-export function clearClassData(id, token) {
-  return request(`/classes/${id}/clear`, {
+export function clearClassData(id, semesterId, token) {
+  return request(`/classes/${id}/clear${semesterId ? `?semester_id=${encodeURIComponent(semesterId)}` : ""}`, {
     method: "POST",
     headers: { Authorization: `Bearer ${token}` }
   });
@@ -135,10 +173,11 @@ export function deleteAdmin(username, token) {
   });
 }
 
-export function uploadXlsx(file, token, classId) {
+export function uploadXlsx(file, token, classId, semesterId) {
   const form = new FormData();
   form.append("file", file);
   form.append("class_id", classId);
+  form.append("semester_id", semesterId);
   return request("/upload", {
     method: "POST",
     headers: { Authorization: `Bearer ${token}` },
@@ -146,10 +185,11 @@ export function uploadXlsx(file, token, classId) {
   });
 }
 
-export function importSecondClass(file, token, classId, threshold) {
+export function importSecondClass(file, token, classId, semesterId, threshold) {
   const form = new FormData();
   form.append("file", file);
   form.append("class_id", classId);
+  form.append("semester_id", semesterId);
   form.append("threshold", String(threshold));
   return request("/secondclass/import", {
     method: "POST",
@@ -218,8 +258,11 @@ export function resetAiPrompts(token) {
   });
 }
 
-export async function exportExcel(classId) {
-  const res = await fetch(`${API}/export${classId ? `?class_id=${encodeURIComponent(classId)}` : ""}`);
+export async function exportExcel(classId, semesterId) {
+  const q = new URLSearchParams();
+  if (classId) q.set("class_id", classId);
+  if (semesterId) q.set("semester_id", semesterId);
+  const res = await fetch(`${API}/export${q.toString() ? `?${q}` : ""}`);
   if (!res.ok) throw new Error("导出失败");
   const blob = await res.blob();
   const url = URL.createObjectURL(blob);
@@ -246,8 +289,11 @@ export async function exportExcel(classId) {
   }, 5000);
 }
 
-export async function exportEvidenceZip(classId, token) {
-  const res = await fetch(`${API}/export/evidence-zip${classId ? `?class_id=${encodeURIComponent(classId)}` : ""}`, {
+export async function exportEvidenceZip(classId, semesterId, token) {
+  const q = new URLSearchParams();
+  if (classId) q.set("class_id", classId);
+  if (semesterId) q.set("semester_id", semesterId);
+  const res = await fetch(`${API}/export/evidence-zip${q.toString() ? `?${q}` : ""}`, {
     headers: { Authorization: `Bearer ${token}` }
   });
   if (!res.ok) {
@@ -326,6 +372,7 @@ export function batchAward(payload, token) {
   form.append("category", payload.category);
   form.append("points", payload.points);
   form.append("basis", payload.basis);
+  if (payload.semester_id) form.append("semester_id", payload.semester_id);
   (payload.files || []).forEach((f) => form.append("files", f));
   return request("/awards/batch", {
     method: "POST",
@@ -334,8 +381,11 @@ export function batchAward(payload, token) {
   });
 }
 
-export function listAwards(classId) {
-  return request(`/awards${classId ? `?class_id=${encodeURIComponent(classId)}` : ""}`);
+export function listAwards(classId, semesterId) {
+  const q = new URLSearchParams();
+  if (classId) q.set("class_id", classId);
+  if (semesterId) q.set("semester_id", semesterId);
+  return request(`/awards${q.toString() ? `?${q}` : ""}`);
 }
 
 export function approveAward(id, token, payload = {}) {

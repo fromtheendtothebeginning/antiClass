@@ -39,14 +39,20 @@ def _load_db_config():
 DB_CONFIG = {**_load_db_config(), "charset": "utf8mb4"}
 DB_NAME = os.environ.get("MYSQL_DB", "scholarship")
 
-STUDENT_FIELDS = ("sid", "name", "class_id", "course_count", "credits", "gpa", "deyu", "score", "tiyu", "meiyu", "laoyu", "fujia", "failed", "total")
-AWARD_FIELDS = ("id", "sid", "name", "class_id", "category", "points", "basis", "evidence", "folder", "approved", "reject_reason", "created_at")
+STUDENT_FIELDS = ("sid", "name", "class_id", "semester_id", "course_count", "credits", "gpa", "deyu", "score", "tiyu", "meiyu", "laoyu", "fujia", "failed", "total")
+AWARD_FIELDS = ("id", "sid", "name", "class_id", "semester_id", "category", "points", "basis", "evidence", "folder", "approved", "reject_reason", "created_at")
 ADMIN_FIELDS = ("username", "role", "class_id", "created_at", "nickname")
 FUND_FIELDS = ("id", "class_id", "kind", "amount", "title", "evidence", "created_by", "created_at")
 
+# 学期档位固定（sort 取下标）；学年学期用于导出文件名，如「26-27上学期」
+SEMESTER_LABELS = ["大一上", "大一下", "大二上", "大二下", "大三上", "大三下", "大四上", "大四下"]
+DEFAULT_SEMESTER = {"label": "大一下", "term": "25-26下学期"}
+
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS students (
-    sid VARCHAR(32) PRIMARY KEY,
+    semester_id CHAR(32) NOT NULL DEFAULT '',
+    class_id CHAR(32) NOT NULL DEFAULT '',
+    sid VARCHAR(32) NOT NULL,
     name VARCHAR(64) NOT NULL DEFAULT '',
     course_count INT NOT NULL DEFAULT 0,
     credits DECIMAL(9,2) NOT NULL DEFAULT 0,
@@ -58,13 +64,16 @@ CREATE TABLE IF NOT EXISTS students (
     laoyu DECIMAL(7,2) NOT NULL DEFAULT 0,
     fujia DECIMAL(6,2) NOT NULL DEFAULT 0,
     failed TINYINT(1) NOT NULL DEFAULT 0,
-    total DECIMAL(9,2) NOT NULL DEFAULT 0
+    total DECIMAL(9,2) NOT NULL DEFAULT 0,
+    PRIMARY KEY (semester_id, class_id, sid)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 CREATE TABLE IF NOT EXISTS awards (
     id CHAR(32) PRIMARY KEY,
     sid VARCHAR(32) NOT NULL,
     name VARCHAR(64) NOT NULL DEFAULT '',
+    class_id CHAR(32) NOT NULL DEFAULT '',
+    semester_id CHAR(32) NOT NULL DEFAULT '',
     category VARCHAR(16) NOT NULL,
     points DECIMAL(6,1) NOT NULL DEFAULT 0,
     basis TEXT,
@@ -80,6 +89,8 @@ CREATE TABLE IF NOT EXISTS adjust_log (
     created_at DATETIME NOT NULL,
     sid VARCHAR(32) NOT NULL,
     name VARCHAR(64) NOT NULL DEFAULT '',
+    class_id CHAR(32) NOT NULL DEFAULT '',
+    semester_id CHAR(32) NOT NULL DEFAULT '',
     field VARCHAR(8) NOT NULL,
     op VARCHAR(4) NOT NULL,
     points DECIMAL(7,2) NOT NULL DEFAULT 0,
@@ -105,6 +116,24 @@ CREATE TABLE IF NOT EXISTS classes (
     created_at DATETIME NOT NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
+CREATE TABLE IF NOT EXISTS semesters (
+    id CHAR(32) PRIMARY KEY,
+    label VARCHAR(16) NOT NULL,
+    term VARCHAR(32) NOT NULL DEFAULT '',
+    sort INT NOT NULL DEFAULT 99,
+    is_open TINYINT(1) NOT NULL DEFAULT 0,
+    created_at DATETIME NOT NULL,
+    UNIQUE KEY uniq_semester_label (label)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+CREATE TABLE IF NOT EXISTS class_semesters (
+    semester_id CHAR(32) NOT NULL,
+    class_id CHAR(32) NOT NULL,
+    row_count INT NOT NULL DEFAULT 0,
+    source VARCHAR(255) NOT NULL DEFAULT '',
+    PRIMARY KEY (semester_id, class_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
 CREATE TABLE IF NOT EXISTS admins (
     username VARCHAR(32) PRIMARY KEY,
     salt CHAR(32) NOT NULL,
@@ -121,6 +150,7 @@ CREATE TABLE IF NOT EXISTS drafts (
     sid VARCHAR(32) NOT NULL,
     name VARCHAR(64) NOT NULL DEFAULT '',
     class_id CHAR(32) NOT NULL DEFAULT '',
+    semester_id CHAR(32) NOT NULL DEFAULT '',
     folder VARCHAR(64) NOT NULL DEFAULT '',
     items JSON NOT NULL,
     evidence JSON NOT NULL,
@@ -132,6 +162,7 @@ CREATE TABLE IF NOT EXISTS assess_sessions (
     sid VARCHAR(32) NOT NULL,
     name VARCHAR(64) NOT NULL DEFAULT '',
     class_id CHAR(32) NOT NULL DEFAULT '',
+    semester_id CHAR(32) NOT NULL DEFAULT '',
     folder VARCHAR(64) NOT NULL DEFAULT '',
     state JSON NOT NULL,
     created_at DATETIME NOT NULL,
@@ -182,6 +213,10 @@ def tx():
 
 
 def init_db():
+    """建库建表 + 学期迁移：老数据（无 semester_id）统一归入默认学期「大一下」。
+
+    返回 (default_semester_id, created)：老库升级时 created=True，用于播种/回填判断。
+    """
     with _connect() as conn:
         with conn.cursor() as cur:
             cur.execute(
@@ -194,9 +229,15 @@ def init_db():
                 cur.execute(stmt)
         for table, column, ddl in (
             ("students", "class_id", "class_id CHAR(32) NOT NULL DEFAULT ''"),
+            ("students", "semester_id", "semester_id CHAR(32) NOT NULL DEFAULT ''"),
             ("students", "failed", "failed TINYINT(1) NOT NULL DEFAULT 0"),
             ("awards", "class_id", "class_id CHAR(32) NOT NULL DEFAULT ''"),
+            ("awards", "semester_id", "semester_id CHAR(32) NOT NULL DEFAULT ''"),
             ("awards", "reject_reason", "reject_reason VARCHAR(500) NOT NULL DEFAULT ''"),
+            ("adjust_log", "class_id", "class_id CHAR(32) NOT NULL DEFAULT ''"),
+            ("adjust_log", "semester_id", "semester_id CHAR(32) NOT NULL DEFAULT ''"),
+            ("drafts", "semester_id", "semester_id CHAR(32) NOT NULL DEFAULT ''"),
+            ("assess_sessions", "semester_id", "semester_id CHAR(32) NOT NULL DEFAULT ''"),
             ("admins", "nickname", "nickname VARCHAR(32) NOT NULL DEFAULT ''"),
             ("admins", "avatar", "avatar MEDIUMTEXT"),
             ("funds", "evidence", "evidence JSON NULL"),
@@ -208,13 +249,62 @@ def init_db():
             )
             if cur.fetchone()["n"] == 0:
                 cur.execute(f"ALTER TABLE `{table}` ADD COLUMN {ddl}")
+
+        # 第二课堂导入的 meta 键要带学期（sc2_<semester>_<class>），把 32 位键宽扩到 128
         cur.execute(
-            "SELECT COUNT(*) AS n FROM information_schema.KEY_COLUMN_USAGE "
-            "WHERE TABLE_SCHEMA=%s AND TABLE_NAME='students' AND CONSTRAINT_NAME='PRIMARY' AND COLUMN_NAME='sid'",
+            "SELECT CHARACTER_MAXIMUM_LENGTH AS n FROM information_schema.COLUMNS "
+            "WHERE TABLE_SCHEMA=%s AND TABLE_NAME='meta' AND COLUMN_NAME='k'",
             (DB_NAME,),
         )
-        if cur.fetchone()["n"] > 0:
-            cur.execute("ALTER TABLE students DROP PRIMARY KEY, ADD PRIMARY KEY (class_id, sid)")
+        meta_col = cur.fetchone()
+        if meta_col and int(meta_col["n"] or 0) < 128:
+            cur.execute("ALTER TABLE meta MODIFY k VARCHAR(128) NOT NULL")
+
+        # 默认学期：库中还没有学期时创建「大一下 / 25-26下学期」并开放申报。
+        # 返回 created=True 表示本次是首建（后续启动不再重复播种）。
+        cur.execute("SELECT id FROM semesters ORDER BY is_open DESC, sort ASC, created_at ASC LIMIT 1")
+        row = cur.fetchone()
+        created = False
+        if row:
+            default_semester_id = row["id"]
+        else:
+            default_semester_id = uuid.uuid4().hex
+            created = True
+            cur.execute(
+                "INSERT INTO semesters (id,label,term,sort,is_open,created_at) VALUES (%s,%s,%s,%s,1,%s)",
+                (
+                    default_semester_id, DEFAULT_SEMESTER["label"], DEFAULT_SEMESTER["term"],
+                    SEMESTER_LABELS.index(DEFAULT_SEMESTER["label"]), datetime.now(),
+                ),
+            )
+
+        # 老数据回填默认学期
+        for table in ("students", "awards", "adjust_log", "drafts", "assess_sessions"):
+            cur.execute(
+                f"UPDATE `{table}` SET semester_id=%s WHERE semester_id='' OR semester_id IS NULL",
+                (default_semester_id,),
+            )
+
+        # 班级的 row_count/source 原本只有一份，迁移到 class_semesters（仅首次，避免覆盖后续值）
+        cur.execute("SELECT COUNT(*) AS n FROM class_semesters")
+        if int(cur.fetchone()["n"]) == 0:
+            cur.execute(
+                "INSERT INTO class_semesters (semester_id,class_id,row_count,source) "
+                "SELECT %s, id, row_count, source FROM classes",
+                (default_semester_id,),
+            )
+
+        # students 主键改为 (semester_id, class_id, sid)：老库可能是 sid 或 (class_id,sid)
+        cur.execute(
+            "SELECT COLUMN_NAME FROM information_schema.KEY_COLUMN_USAGE "
+            "WHERE TABLE_SCHEMA=%s AND TABLE_NAME='students' AND CONSTRAINT_NAME='PRIMARY' "
+            "ORDER BY ORDINAL_POSITION",
+            (DB_NAME,),
+        )
+        pk = tuple(r["COLUMN_NAME"] for r in cur.fetchall())
+        if pk != ("semester_id", "class_id", "sid"):
+            cur.execute("ALTER TABLE students DROP PRIMARY KEY, ADD PRIMARY KEY (semester_id, class_id, sid)")
+    return default_semester_id, created
 
 
 def _plain(value):
@@ -243,15 +333,20 @@ def _row_award(row):
 
 # ---------- students ----------
 
-def list_students(class_id=None):
+def list_students(class_id=None, semester_id=None):
+    where, params = [], []
+    if class_id:
+        where.append("class_id=%s")
+        params.append(class_id)
+    if semester_id:
+        where.append("semester_id=%s")
+        params.append(semester_id)
+    sql = "SELECT * FROM students"
+    if where:
+        sql += " WHERE " + " AND ".join(where)
+    sql += " ORDER BY total DESC, score DESC, gpa DESC, sid ASC"
     with tx() as cur:
-        if class_id:
-            cur.execute(
-                "SELECT * FROM students WHERE class_id=%s ORDER BY total DESC, score DESC, gpa DESC, sid ASC",
-                (class_id,),
-            )
-        else:
-            cur.execute("SELECT * FROM students ORDER BY total DESC, score DESC, gpa DESC, sid ASC")
+        cur.execute(sql, tuple(params))
         rows = cur.fetchall()
     result = [_row_student(r) for r in rows]
     for rank, s in enumerate(result, start=1):
@@ -259,23 +354,37 @@ def list_students(class_id=None):
     return result
 
 
-def get_student(sid):
+def get_student(sid, semester_id=None, class_id=None):
+    """按学号定位学生；给了学期/班级就精确到该学期该班（多学期下学号会重复，必须带学期）。"""
+    where, params = ["sid=%s"], [sid]
+    if semester_id:
+        where.append("semester_id=%s")
+        params.append(semester_id)
+    if class_id:
+        where.append("class_id=%s")
+        params.append(class_id)
     with tx() as cur:
-        cur.execute("SELECT * FROM students WHERE sid=%s", (sid,))
+        cur.execute(
+            "SELECT * FROM students WHERE " + " AND ".join(where) + " ORDER BY class_id ASC LIMIT 1",
+            tuple(params),
+        )
         row = cur.fetchone()
     return _row_student(row) if row else None
 
 
-def replace_students(students, class_id):
+def replace_students(students, class_id, semester_id):
     with tx() as cur:
-        cur.execute("DELETE FROM students WHERE class_id=%s", (class_id,))
+        cur.execute(
+            "DELETE FROM students WHERE class_id=%s AND semester_id=%s",
+            (class_id, semester_id),
+        )
         for s in students:
             cur.execute(
-                "INSERT INTO students (sid,name,class_id,course_count,credits,gpa,deyu,score,tiyu,meiyu,laoyu,fujia,failed,total) "
-                "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
+                "INSERT INTO students (sid,name,class_id,semester_id,course_count,credits,gpa,deyu,score,tiyu,meiyu,laoyu,fujia,failed,total) "
+                "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
                 tuple(
                     int(s["failed"]) if f == "failed"
-                    else (class_id if f == "class_id" else s.get(f, 0))
+                    else (class_id if f == "class_id" else (semester_id if f == "semester_id" else s.get(f, 0)))
                     for f in STUDENT_FIELDS
                 ),
             )
@@ -299,21 +408,21 @@ def clear_adjust_log():
         cur.execute("DELETE FROM adjust_log")
 
 
-def update_student_score(sid, class_id, field, value, total):
+def update_student_score(sid, class_id, semester_id, field, value, total):
     with tx() as cur:
         cur.execute(
-            f"UPDATE students SET `{field}`=%s, total=%s WHERE sid=%s AND class_id=%s",
-            (round(float(value), 2), round(float(total), 2), sid, class_id),
+            f"UPDATE students SET `{field}`=%s, total=%s WHERE sid=%s AND class_id=%s AND semester_id=%s",
+            (round(float(value), 2), round(float(total), 2), sid, class_id, semester_id),
         )
 
 
-def update_failed_flags(class_id, failed_map):
+def update_failed_flags(class_id, semester_id, failed_map):
     """按源数据重算 failed（参评资格）标记；只写 failed 列，不动分数与 total。"""
     with tx() as cur:
         for sid, failed in failed_map.items():
             cur.execute(
-                "UPDATE students SET failed=%s WHERE sid=%s AND class_id=%s",
-                (1 if failed else 0, sid, class_id),
+                "UPDATE students SET failed=%s WHERE sid=%s AND class_id=%s AND semester_id=%s",
+                (1 if failed else 0, sid, class_id, semester_id),
             )
 
 
@@ -323,22 +432,31 @@ def insert_awards(records):
     with tx() as cur:
         for r in records:
             cur.execute(
-                "INSERT INTO awards (id,sid,name,class_id,category,points,basis,evidence,folder,approved,reject_reason,created_at) "
-                "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
+                "INSERT INTO awards (id,sid,name,class_id,semester_id,category,points,basis,evidence,folder,approved,reject_reason,created_at) "
+                "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
                 (
-                    r["id"], r["sid"], r["name"], r.get("class_id", ""), r["category"], round(float(r["points"]), 1),
+                    r["id"], r["sid"], r["name"], r.get("class_id", ""), r.get("semester_id", ""),
+                    r["category"], round(float(r["points"]), 1),
                     r["basis"], json.dumps(r["evidence"], ensure_ascii=False), r["folder"],
                     r["approved"], r.get("reject_reason", "") or "", r["created_at"],
                 ),
             )
 
 
-def list_awards(class_id=None):
+def list_awards(class_id=None, semester_id=None):
+    where, params = [], []
+    if class_id:
+        where.append("class_id=%s")
+        params.append(class_id)
+    if semester_id:
+        where.append("semester_id=%s")
+        params.append(semester_id)
+    sql = "SELECT * FROM awards"
+    if where:
+        sql += " WHERE " + " AND ".join(where)
+    sql += " ORDER BY created_at DESC, id DESC"
     with tx() as cur:
-        if class_id:
-            cur.execute("SELECT * FROM awards WHERE class_id=%s ORDER BY created_at DESC, id DESC", (class_id,))
-        else:
-            cur.execute("SELECT * FROM awards ORDER BY created_at DESC, id DESC")
+        cur.execute(sql, tuple(params))
         return [_row_award(r) for r in cur.fetchall()]
 
 
@@ -376,7 +494,7 @@ def folder_in_use(folder):
 # ---------- drafts（AI 分析草稿，提交/删除即清理；24h 过期） ----------
 
 def _row_draft(row):
-    row = {k: _plain(row[k]) for k in ("id", "sid", "name", "class_id", "folder", "items", "evidence", "created_at")}
+    row = {k: _plain(row[k]) for k in ("id", "sid", "name", "class_id", "semester_id", "folder", "items", "evidence", "created_at")}
     for k in ("items", "evidence"):
         if isinstance(row[k], str):
             try:
@@ -389,9 +507,11 @@ def _row_draft(row):
 def insert_draft(draft):
     with tx() as cur:
         cur.execute(
-            "INSERT INTO drafts (id,sid,name,class_id,folder,items,evidence,created_at) VALUES (%s,%s,%s,%s,%s,%s,%s,%s)",
+            "INSERT INTO drafts (id,sid,name,class_id,semester_id,folder,items,evidence,created_at) "
+            "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s)",
             (
-                draft["id"], draft["sid"], draft["name"], draft.get("class_id", ""), draft.get("folder", ""),
+                draft["id"], draft["sid"], draft["name"], draft.get("class_id", ""),
+                draft.get("semester_id", ""), draft.get("folder", ""),
                 json.dumps(draft["items"], ensure_ascii=False), json.dumps(draft["evidence"], ensure_ascii=False),
                 draft.get("created_at", datetime.now()),
             ),
@@ -443,12 +563,13 @@ def assess_upsert(sess):
     }
     with tx() as cur:
         cur.execute(
-            "INSERT INTO assess_sessions (id,sid,name,class_id,folder,state,created_at,updated_at) "
-            "VALUES (%s,%s,%s,%s,%s,%s,%s,%s) "
+            "INSERT INTO assess_sessions (id,sid,name,class_id,semester_id,folder,state,created_at,updated_at) "
+            "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s) "
             "ON DUPLICATE KEY UPDATE sid=VALUES(sid), name=VALUES(name), class_id=VALUES(class_id), "
-            "folder=VALUES(folder), state=VALUES(state), updated_at=VALUES(updated_at)",
+            "semester_id=VALUES(semester_id), folder=VALUES(folder), state=VALUES(state), updated_at=VALUES(updated_at)",
             (
-                sess["id"], sess["sid"], sess.get("name", ""), sess.get("class_id", ""), sess.get("folder", ""),
+                sess["id"], sess["sid"], sess.get("name", ""), sess.get("class_id", ""),
+                sess.get("semester_id", ""), sess.get("folder", ""),
                 json.dumps(state, ensure_ascii=False),
                 datetime.fromtimestamp(sess.get("created", time.time())),
                 datetime.fromtimestamp(sess.get("updated", time.time())),
@@ -587,9 +708,11 @@ def insert_adjust_log(entries):
     with tx() as cur:
         for e in entries:
             cur.execute(
-                "INSERT INTO adjust_log (created_at,sid,name,field,op,points,old,new) VALUES (%s,%s,%s,%s,%s,%s,%s,%s)",
+                "INSERT INTO adjust_log (created_at,sid,name,class_id,semester_id,field,op,points,old,new) "
+                "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
                 (
-                    e["created_at"], e["sid"], e["name"], e["field"], e["op"],
+                    e["created_at"], e["sid"], e["name"], e.get("class_id", ""), e.get("semester_id", ""),
+                    e["field"], e["op"],
                     round(float(e["points"]), 2), round(float(e["old"]), 2), round(float(e["new"]), 2),
                 ),
             )
@@ -601,7 +724,7 @@ def list_adjust_log(limit=500):
         return [{k: _plain(v) for k, v in r.items()} for r in cur.fetchall()]
 
 
-def apply_secondclass(class_id, ops, meta_key, meta_value, records=(), delete_aids=()):
+def apply_secondclass(class_id, semester_id, ops, meta_key, meta_value, records=(), delete_aids=()):
     """第二课堂导入：单事务内批量调 deyu 并留痕 adjust_log，删除上次导入的申报记录、
     写入本次自动通过的申报记录，最后写 meta。
 
@@ -615,27 +738,30 @@ def apply_secondclass(class_id, ops, meta_key, meta_value, records=(), delete_ai
             cur.execute("DELETE FROM awards WHERE id=%s", (aid,))
         for e in ops:
             cur.execute(
-                "UPDATE students SET `deyu`=%s, total=%s WHERE sid=%s AND class_id=%s",
+                "UPDATE students SET `deyu`=%s, total=%s WHERE sid=%s AND class_id=%s AND semester_id=%s",
                 (
                     round(float(e["new"]), 2),
                     round(float(e["total"]), 2),
                     e["sid"],
                     class_id,
+                    semester_id,
                 ),
             )
             cur.execute(
-                "INSERT INTO adjust_log (created_at,sid,name,field,op,points,old,new) VALUES (%s,%s,%s,%s,%s,%s,%s,%s)",
+                "INSERT INTO adjust_log (created_at,sid,name,class_id,semester_id,field,op,points,old,new) "
+                "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
                 (
-                    e["created_at"], e["sid"], e["name"], "deyu", e["op"],
+                    e["created_at"], e["sid"], e["name"], class_id, semester_id, "deyu", e["op"],
                     round(float(e["points"]), 2), round(float(e["old"]), 2), round(float(e["new"]), 2),
                 ),
             )
         for r in records:
             cur.execute(
-                "INSERT INTO awards (id,sid,name,class_id,category,points,basis,evidence,folder,approved,reject_reason,created_at) "
-                "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
+                "INSERT INTO awards (id,sid,name,class_id,semester_id,category,points,basis,evidence,folder,approved,reject_reason,created_at) "
+                "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
                 (
-                    r["id"], r["sid"], r["name"], r.get("class_id", ""), r["category"], round(float(r["points"]), 1),
+                    r["id"], r["sid"], r["name"], r.get("class_id", ""), r.get("semester_id", ""),
+                    r["category"], round(float(r["points"]), 1),
                     r["basis"], json.dumps(r["evidence"], ensure_ascii=False), r["folder"],
                     r["approved"], r.get("reject_reason", "") or "", r["created_at"],
                 ),
@@ -696,12 +822,23 @@ def _row_class(row):
     return {k: _plain(row[k]) for k in ("id", "name", "row_count", "source", "created_at")}
 
 
-def list_classes():
+def list_classes(semester_id=None):
+    """班级是跨学期的稳定实体；传 semester_id 时返回该学期的学生数/课程记录元数据。"""
     with tx() as cur:
-        cur.execute(
-            "SELECT c.*, (SELECT COUNT(*) FROM students s WHERE s.class_id=c.id) AS students "
-            "FROM classes c ORDER BY c.created_at ASC"
-        )
+        if semester_id:
+            cur.execute(
+                "SELECT c.id, c.name, c.created_at, "
+                "COALESCE(cs.row_count, 0) AS row_count, COALESCE(cs.source, '') AS source, "
+                "(SELECT COUNT(*) FROM students s WHERE s.class_id=c.id AND s.semester_id=%s) AS students "
+                "FROM classes c LEFT JOIN class_semesters cs "
+                "ON cs.class_id=c.id AND cs.semester_id=%s ORDER BY c.created_at ASC",
+                (semester_id, semester_id),
+            )
+        else:
+            cur.execute(
+                "SELECT c.*, (SELECT COUNT(*) FROM students s WHERE s.class_id=c.id) AS students "
+                "FROM classes c ORDER BY c.created_at ASC"
+            )
         return [{**_row_class(r), "students": int(r["students"])} for r in cur.fetchall()]
 
 
@@ -725,24 +862,140 @@ def create_class(name):
 def delete_class(cid):
     with tx() as cur:
         cur.execute("DELETE FROM classes WHERE id=%s", (cid,))
+        cur.execute("DELETE FROM class_semesters WHERE class_id=%s", (cid,))
 
 
-def clear_class_data(cid):
-    """清空班级数据：返回 (被删申报占用的证据文件夹列表, 被删班费记录 id 列表)。"""
+def clear_class_data(cid, semester_id):
+    """清空某学期某班的数据（榜单/申报/调分留痕），返回被删申报占用的证据文件夹列表。
+
+    班费是跨学期账本，不在这里清空。
+    """
     with tx() as cur:
-        cur.execute("SELECT DISTINCT folder FROM awards WHERE class_id=%s", (cid,))
+        cur.execute(
+            "SELECT DISTINCT folder FROM awards WHERE class_id=%s AND semester_id=%s",
+            (cid, semester_id),
+        )
         folders = [r["folder"] for r in cur.fetchall()]
-        cur.execute("SELECT id FROM funds WHERE class_id=%s", (cid,))
-        fund_ids = [r["id"] for r in cur.fetchall()]
-        cur.execute("DELETE FROM awards WHERE class_id=%s", (cid,))
-        cur.execute("DELETE FROM students WHERE class_id=%s", (cid,))
-        cur.execute("DELETE FROM funds WHERE class_id=%s", (cid,))
-    return folders, fund_ids
+        cur.execute("DELETE FROM awards WHERE class_id=%s AND semester_id=%s", (cid, semester_id))
+        cur.execute("DELETE FROM students WHERE class_id=%s AND semester_id=%s", (cid, semester_id))
+        cur.execute("DELETE FROM adjust_log WHERE class_id=%s AND semester_id=%s", (cid, semester_id))
+        cur.execute(
+            "DELETE FROM class_semesters WHERE class_id=%s AND semester_id=%s",
+            (cid, semester_id),
+        )
+    return folders
 
 
-def set_class_meta(cid, rows, source):
+def get_class_meta(cid, semester_id):
     with tx() as cur:
+        cur.execute(
+            "SELECT row_count, source FROM class_semesters WHERE class_id=%s AND semester_id=%s",
+            (cid, semester_id),
+        )
+        row = cur.fetchone()
+    return {"row_count": int(row["row_count"]), "source": row["source"] or ""} if row else {"row_count": 0, "source": ""}
+
+
+def set_class_meta(cid, rows, source, semester_id):
+    with tx() as cur:
+        cur.execute(
+            "INSERT INTO class_semesters (semester_id,class_id,row_count,source) VALUES (%s,%s,%s,%s) "
+            "ON DUPLICATE KEY UPDATE row_count=VALUES(row_count), source=VALUES(source)",
+            (semester_id, cid, int(rows), source),
+        )
+        # 兼容旧字段（无学期语境下发榜单不再使用它，保留最后导入值便于排查）
         cur.execute("UPDATE classes SET row_count=%s, source=%s WHERE id=%s", (int(rows), source, cid))
+
+
+# ---------- semesters（学期：跨学期的稳定班级，每学期一套榜单/申报；同时只有一个开放申报） ----------
+
+def _row_semester(row):
+    result = {k: _plain(row[k]) for k in ("id", "label", "term", "sort", "is_open", "created_at")}
+    result["is_open"] = bool(row["is_open"])
+    return result
+
+
+def list_semesters():
+    with tx() as cur:
+        cur.execute("SELECT * FROM semesters ORDER BY sort ASC, created_at ASC")
+        return [_row_semester(r) for r in cur.fetchall()]
+
+
+def get_semester(sid):
+    with tx() as cur:
+        cur.execute("SELECT * FROM semesters WHERE id=%s", (sid,))
+        row = cur.fetchone()
+    return _row_semester(row) if row else None
+
+
+def get_open_semester():
+    """当前开放申报的学期（学生提交自动落到这里）；没有开放学期时返回 None。"""
+    with tx() as cur:
+        cur.execute("SELECT * FROM semesters WHERE is_open=1 ORDER BY sort ASC LIMIT 1")
+        row = cur.fetchone()
+    return _row_semester(row) if row else None
+
+
+def create_semester(label, term):
+    sid = uuid.uuid4().hex
+    sort = SEMESTER_LABELS.index(label) if label in SEMESTER_LABELS else 99
+    with tx() as cur:
+        cur.execute(
+            "INSERT INTO semesters (id,label,term,sort,is_open,created_at) VALUES (%s,%s,%s,%s,0,%s)",
+            (sid, label, term, sort, datetime.now()),
+        )
+    return {"id": sid, "label": label, "term": term, "sort": sort, "is_open": False}
+
+
+def update_semester_term(sid, term):
+    with tx() as cur:
+        cur.execute("UPDATE semesters SET term=%s WHERE id=%s", (term, sid))
+
+
+def open_semester(sid):
+    """把某学期设为唯一开放申报的学期（同一时间只开放一个）。"""
+    with tx() as cur:
+        cur.execute("UPDATE semesters SET is_open=0")
+        cur.execute("UPDATE semesters SET is_open=1 WHERE id=%s", (sid,))
+
+
+def delete_semester(sid):
+    with tx() as cur:
+        cur.execute("DELETE FROM semesters WHERE id=%s", (sid,))
+        cur.execute("DELETE FROM class_semesters WHERE semester_id=%s", (sid,))
+
+
+def semester_data_count(sid):
+    """该学期已有多少学生/申报记录（非 0 时禁止删除学期）。"""
+    with tx() as cur:
+        cur.execute("SELECT COUNT(*) AS n FROM students WHERE semester_id=%s", (sid,))
+        students = int(cur.fetchone()["n"])
+        cur.execute("SELECT COUNT(*) AS n FROM awards WHERE semester_id=%s", (sid,))
+        awards = int(cur.fetchone()["n"])
+    return students, awards
+
+
+def migrate_secondclass_meta(semester_id):
+    """老库的 sc2_<class_id[:27]> 键迁移为 sc2_<semester_id>_<class_id>（否则升级后首次重导
+    找不到上次记录，会把 10 分再加一遍）。"""
+    with tx() as cur:
+        cur.execute("SELECT k, v FROM meta WHERE k LIKE 'sc2/_%' ESCAPE '/'")
+        rows = cur.fetchall()
+        for r in rows:
+            old = r["k"]
+            if old.startswith(f"sc2_{semester_id}_"):
+                continue
+            suffix = old[4:]
+            cur.execute("SELECT id FROM classes WHERE id LIKE %s LIMIT 1", (suffix + "%",))
+            cls = cur.fetchone()
+            if not cls:
+                continue
+            new = f"sc2_{semester_id}_{cls['id']}"
+            cur.execute(
+                "INSERT INTO meta (k,v) VALUES (%s,%s) ON DUPLICATE KEY UPDATE v=VALUES(v)",
+                (new, r["v"]),
+            )
+            cur.execute("DELETE FROM meta WHERE k=%s", (old,))
 
 
 # ---------- admins ----------

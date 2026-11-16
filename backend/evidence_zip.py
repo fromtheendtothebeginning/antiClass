@@ -77,13 +77,13 @@ def _yaml_value(v, indent):
     return "\n" + _yaml_dumps(v, indent)
 
 
-def build_evidence_zip(class_id=None):
+def build_evidence_zip(class_id=None, semester_id=None):
     """把「已通过(approved=是)」申报按人打包：每人一个「学号_姓名/」目录，
-    内含 申报明细.yaml 与 evidence/ 证据文件，外加总 index.yaml。返回 BytesIO。
+    内含 申报明细.yaml 与 evidence/ 证据文件，外加总 index.yaml。
 
     被多人引用的同一证据文件放入顶层「公共证据/」目录，个人以 ref 引用。
     """
-    records = [r for r in db.list_awards(class_id or None) if r.get("approved") == "是"]
+    records = [r for r in db.list_awards(class_id or None, semester_id or None) if r.get("approved") == "是"]
     if not records:
         raise HTTPException(status_code=400, detail="当前范围暂无已通过的申报，无需导出")
 
@@ -139,7 +139,7 @@ def build_evidence_zip(class_id=None):
             folder_name = _ZIP_NAME_BAD.sub("_", f"{sid}_{p['name']}") or sid
             used_names = set()  # 同人证据去重名
             person_files = 0
-            person_json = {"sid": sid, "name": p["name"], "class_id": p["records"][0].get("class_id", ""), "records": []}
+            person_json = {"sid": sid, "name": p["name"], "class_id": p["records"][0].get("class_id", ""), "semester_id": p["records"][0].get("semester_id", ""), "records": []}
             for r in p["records"]:
                 rec_json = {
                     "id": r["id"],

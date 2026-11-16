@@ -2,6 +2,10 @@
 
 export const CATEGORIES = ["德育", "体育", "美育", "劳育", "附加分"];
 
+// 学期档位（与后端 db.SEMESTER_LABELS 保持一致）
+export const SEMESTER_LABELS = ["大一上", "大一下", "大二上", "大二下", "大三上", "大三下", "大四上", "大四下"];
+export const SEMESTER_OPTIONS = SEMESTER_LABELS.map((label) => ({ value: label, label }));
+
 export const SCH_TABS = ["board", "apply", "pass", "approve", "manage"];
 export const PUBLIC_TABS = ["board", "apply", "pass", "approve"];
 export const TAB_LABELS = { board: "榜单", apply: "加分申报", pass: "加分一遍过", approve: "加分审批", manage: "数据管理" };

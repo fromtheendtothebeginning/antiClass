@@ -31,6 +31,15 @@ class ClassNameBody(BaseModel):
     name: str
 
 
+class SemesterBody(BaseModel):
+    label: str
+    term: str = ""
+
+
+class SemesterTermBody(BaseModel):
+    term: str = ""
+
+
 class AdminBody(BaseModel):
     username: str
     password: str
@@ -47,11 +56,78 @@ class AdjustBody(BaseModel):
     field: str
     op: str
     points: float
+    class_id: str = ""
+    semester_id: str = ""
 
 
 @router.get("/api/classes")
-def list_classes():
-    return {"classes": db.list_classes()}
+def list_classes(semester_id: str | None = None):
+    return {"classes": db.list_classes((semester_id or "").strip() or None)}
+
+
+# ---------- 学期（班级跨学期；同一时间只有一个学期开放申报） ----------
+
+@router.get("/api/semesters")
+def list_semesters():
+    semesters = db.list_semesters()
+    active = next((s for s in semesters if s["is_open"]), None)
+    return {"semesters": semesters, "active_id": active["id"] if active else ""}
+
+
+@router.post("/api/semesters")
+def add_semester(body: SemesterBody, authorization: str = Header(default="")):
+    require_root(authorization)
+    label = body.label.strip()
+    term = body.term.strip()
+    if label not in db.SEMESTER_LABELS:
+        raise HTTPException(status_code=400, detail="学期档位无效，可选：" + "、".join(db.SEMESTER_LABELS))
+    if len(term) > 32:
+        raise HTTPException(status_code=400, detail="学年学期过长（最多 32 字）")
+    if any(s["label"] == label for s in db.list_semesters()):
+        raise HTTPException(status_code=400, detail=f"{label} 已存在")
+    return {"ok": True, "semester": db.create_semester(label, term)}
+
+
+@router.put("/api/semesters/{sid}")
+def edit_semester(sid: str, body: SemesterTermBody, authorization: str = Header(default="")):
+    require_root(authorization)
+    if not db.get_semester(sid):
+        raise HTTPException(status_code=404, detail="学期不存在")
+    term = body.term.strip()
+    if len(term) > 32:
+        raise HTTPException(status_code=400, detail="学年学期过长（最多 32 字）")
+    db.update_semester_term(sid, term)
+    return {"ok": True}
+
+
+@router.post("/api/semesters/{sid}/open")
+def open_semester(sid: str, authorization: str = Header(default="")):
+    """设为当前唯一开放申报的学期：学生端提交自动落到这里。"""
+    require_root(authorization)
+    if not db.get_semester(sid):
+        raise HTTPException(status_code=404, detail="学期不存在")
+    db.open_semester(sid)
+    return {"ok": True}
+
+
+@router.delete("/api/semesters/{sid}")
+def remove_semester(sid: str, authorization: str = Header(default="")):
+    require_root(authorization)
+    sem = db.get_semester(sid)
+    if not sem:
+        raise HTTPException(status_code=404, detail="学期不存在")
+    if sem["is_open"]:
+        raise HTTPException(status_code=400, detail="该学期正在开放申报，请先开放另一个学期再删除")
+    if len(db.list_semesters()) <= 1:
+        raise HTTPException(status_code=400, detail="至少保留一个学期")
+    students, awards = db.semester_data_count(sid)
+    if students or awards:
+        raise HTTPException(
+            status_code=400,
+            detail=f"该学期已有数据（{students} 名学生、{awards} 条申报），请先在数据管理中清除后再删除",
+        )
+    db.delete_semester(sid)
+    return {"ok": True}
 
 
 @router.post("/api/classes")
@@ -73,25 +149,27 @@ def remove_class(cid: str, authorization: str = Header(default="")):
     if not db.get_class(cid):
         raise HTTPException(status_code=404, detail="班级不存在")
     if db.list_students(cid):
-        raise HTTPException(status_code=400, detail="该班级仍有学生，请先清除班级数据")
+        raise HTTPException(status_code=400, detail="该班级仍有学生，请先清除各学期数据")
+    if db.list_funds(cid):
+        raise HTTPException(status_code=400, detail="该班级仍有班费记录，请先删除班费记录")
     db.delete_class(cid)
     return {"ok": True}
 
 
 @router.post("/api/classes/{cid}/clear")
-def clear_class(cid: str, authorization: str = Header(default="")):
+def clear_class(cid: str, semester_id: str = "", authorization: str = Header(default="")):
     require_root(authorization)
     cls = db.get_class(cid)
     if not cls:
         raise HTTPException(status_code=404, detail="班级不存在")
-    folders, fund_ids = db.clear_class_data(cid)
-    db.set_class_meta(cid, 0, "")
+    sem = db.get_semester((semester_id or "").strip())
+    if not sem:
+        raise HTTPException(status_code=400, detail="请选择要清除的学期")
+    folders = db.clear_class_data(cid, sem["id"])
     for folder in folders:
         if folder and not db.folder_in_use(folder):
             shutil.rmtree(UPLOADS_DIR / folder, ignore_errors=True)
-    for fid in fund_ids:
-        shutil.rmtree(UPLOADS_DIR / "funds" / fid, ignore_errors=True)
-    return {"ok": True, "class": cls["name"]}
+    return {"ok": True, "class": cls["name"], "semester": sem["label"]}
 
 
 @router.post("/api/admins")
@@ -152,6 +230,7 @@ def get_admins(authorization: str = Header(default="")):
 def upload(
     file: UploadFile = File(...),
     class_id: str = Form(""),
+    semester_id: str = Form(""),
     authorization: str = Header(default=""),
 ):
     session = require_token(authorization)
@@ -162,6 +241,9 @@ def upload(
     cls = db.get_class(class_id)
     if not cls:
         raise HTTPException(status_code=400, detail="班级不存在，请先创建班级")
+    sem = db.get_semester(semester_id.strip())
+    if not sem:
+        raise HTTPException(status_code=400, detail="请选择要导入的学期")
     filename = file.filename or "upload.xlsx"
     if not filename.lower().endswith(".xlsx"):
         raise HTTPException(status_code=400, detail="仅支持 .xlsx 文件")
@@ -178,22 +260,23 @@ def upload(
         # 损坏/改名的非法 xlsx：给出可读中文提示，避免 500
         drop_tmp(tmp)
         raise HTTPException(status_code=400, detail="文件无法解析，请上传成绩导出 xlsx")
-    db.replace_students(students, class_id)
-    db.set_class_meta(class_id, rows, filename)
+    db.replace_students(students, class_id, sem["id"])
+    db.set_class_meta(class_id, rows, filename, sem["id"])
     tmp.unlink(missing_ok=True)
-    return {"ok": True, "students": len(students), "rows": rows, "source": filename}
+    return {"ok": True, "students": len(students), "rows": rows, "source": filename, "semester": sem["label"]}
 
 
 @router.post("/api/secondclass/import")
 def import_secondclass(
     file: UploadFile = File(...),
     class_id: str = Form(""),
+    semester_id: str = Form(""),
     threshold: float = Form(2.0),
     authorization: str = Header(default=""),
 ):
     """导入第二课堂统计 xlsx：对「学分 ≥ threshold」的学生德育(deyu)+10。
 
-    - 防重复：同班再次导入先撤销上一次导入加的 10 分，再按新文件应用。
+    - 防重复：同学期同班再次导入先撤销上一次导入加的 10 分，再按新文件应用。
     - 未达标 / 名单外学生不动（保留现有德育分）。
     - 每次加减写 adjust_log 留痕；并为达标学生生成自动通过的德育申报记录
       （申报列表可见，meta 记录这批记录 id，下次导入按其撤销）。
@@ -208,13 +291,16 @@ def import_secondclass(
     check_class_scope(session, class_id)
     if not db.get_class(class_id):
         raise HTTPException(status_code=400, detail="班级不存在，请先创建班级")
+    sem = db.get_semester((semester_id or "").strip())
+    if not sem:
+        raise HTTPException(status_code=400, detail="请选择学期")
     if threshold < 0:
         raise HTTPException(status_code=400, detail="阈值不能为负")
     filename = file.filename or "secondclass.xlsx"
     if not filename.lower().endswith(".xlsx"):
         raise HTTPException(status_code=400, detail="仅支持 .xlsx 文件")
-    # meta.k 列仅 32 字符，class_id 32 位 hex，短 key 用前缀+截断
-    meta_key = f"sc2_{class_id[:27]}"
+    # 一个班一个学期一份导入记录（同一时间只开放一个学期申报，但历史学期也可能重导）
+    meta_key = f"sc2_{sem['id']}_{class_id}"
 
     tmp = DATA_DIR / f"{uuid.uuid4().hex}.xlsx"
     DATA_DIR.mkdir(parents=True, exist_ok=True)
@@ -266,7 +352,7 @@ def import_secondclass(
     finally:
         drop_tmp(tmp)
 
-    pool = {s["sid"]: s for s in db.list_students(class_id)}
+    pool = {s["sid"]: s for s in db.list_students(class_id, sem["id"])}
     now = datetime.now().isoformat(timespec="seconds")
 
     # 1) 防重复：撤销上一次导入。新格式 meta 带 aids（上次导入生成的申报记录），按记录撤销——
@@ -349,6 +435,7 @@ def import_secondclass(
                 "sid": sid,
                 "name": stu["name"],
                 "class_id": class_id,
+                "semester_id": sem["id"],
                 "category": "德育",
                 "points": 10.0,
                 "basis": f"第二课堂学分达标（{credit:g} 学分 ≥ {threshold:g}）",
@@ -373,7 +460,7 @@ def import_secondclass(
     if ops or records or delete_aids:
         for o in ops:
             o["created_at"] = now
-        db.apply_secondclass(class_id, ops, meta_key, meta_value, records, delete_aids)
+        db.apply_secondclass(class_id, sem["id"], ops, meta_key, meta_value, records, delete_aids)
     else:
         db.set_meta(meta_key, meta_value)  # 无变化也更新阈值/名单，保证下次撤销依据最新
 
@@ -397,7 +484,16 @@ def adjust_scores(body: AdjustBody, authorization: str = Header(default="")):
     if body.points < 0:
         raise HTTPException(status_code=400, detail="数值不能为负")
     cap = 5.0 if body.field == "fujia" else 100.0
-    pool = db.list_students(session.get("class_id") if session["role"] == "admin" else None)
+    sem = db.get_semester((body.semester_id or "").strip())
+    if not sem:
+        raise HTTPException(status_code=400, detail="请选择要调分的学期")
+    class_id = session.get("class_id") if session["role"] == "admin" else (body.class_id or "").strip()
+    if not class_id:
+        raise HTTPException(status_code=400, detail="请选择要调分的班级")
+    check_class_scope(session, class_id)
+    if not db.get_class(class_id):
+        raise HTTPException(status_code=400, detail="班级不存在")
+    pool = db.list_students(class_id, sem["id"])
     tokens = [t for t in re.split(r"[\s,，;；]+", body.sids.strip()) if t]
     if not tokens:
         raise HTTPException(status_code=400, detail="请填写学号（支持正则，如 251184Y3.*）")
@@ -427,13 +523,15 @@ def adjust_scores(body: AdjustBody, authorization: str = Header(default="")):
         new = round(new, 2)
         stu[field] = new
         stu["total"] = calc_total(stu["deyu"], stu["score"], stu["tiyu"], stu["meiyu"], stu["laoyu"], stu["fujia"])
-        db.update_student_score(stu["sid"], stu["class_id"], field, new, stu["total"])
+        db.update_student_score(stu["sid"], stu["class_id"], sem["id"], field, new, stu["total"])
         changes.append({"sid": stu["sid"], "name": stu["name"], "field": field, "old": old, "new": new, "total": stu["total"]})
         log_entries.append(
             {
                 "created_at": datetime.now().isoformat(timespec="seconds"),
                 "sid": stu["sid"],
                 "name": stu["name"],
+                "class_id": stu["class_id"],
+                "semester_id": sem["id"],
                 "field": field,
                 "op": op,
                 "points": body.points,

@@ -6,6 +6,7 @@ import {
   fetchMe,
   fetchLeaderboard,
   fetchClasses,
+  fetchSemesters,
   exportExcel,
   getAppearance,
   listAwards,
@@ -13,6 +14,7 @@ import {
   setOnAuthExpired,
 } from "./api.js";
 import Avatar from "./components/Avatar.jsx";
+import Dropdown from "./components/Dropdown.jsx";
 import GlassTabs from "./components/GlassTabs.jsx";
 import Modal from "./components/Modal.jsx";
 import TextField from "./components/TextField.jsx";
@@ -47,6 +49,7 @@ const TOKEN_KEY = "token";
 const ROLE_KEY = "role";
 const MY_CLASS_KEY = "my_class_id";
 const CLASS_KEY = "sel_class_id"; // 访客看榜时选定的班级（榜单按班展示，需记住选择）
+const SEMESTER_KEY = "sel_semester_id"; // 浏览的学期（申报页会自动切到管理员开放申报的学期）
 
 export default function App() {
   const [token, setToken] = useState(localStorage.getItem(TOKEN_KEY) || "");
@@ -85,6 +88,9 @@ export default function App() {
   const [meta, setMeta] = useState({});
   const [classes, setClasses] = useState([]);
   const [classSel, setClassSel] = useState(localStorage.getItem(CLASS_KEY) || "");
+  const [semesters, setSemesters] = useState([]);
+  const [semesterSel, setSemesterSel] = useState(localStorage.getItem(SEMESTER_KEY) || "");
+  const [openSemesterId, setOpenSemesterId] = useState(""); // 管理员设置的开放申报学期（学生提交自动落到这里）
   const [guideClass, setGuideClass] = useState(""); // 未选班级时引导卡片里的待选班级
   const [loading, setLoading] = useState(false);
   const [awards, setAwards] = useState([]);
@@ -95,13 +101,17 @@ export default function App() {
   const [manageMsg, setManageMsg] = useState(null);
   const [preview, setPreview] = useState(null);
 
-  const boardSeq = useRef(0); // 榜单请求序号：快速切班时丢弃先发后到的旧响应
+  const boardSeq = useRef(0); // 榜单请求序号：快速切班/切学期时丢弃先发后到的旧响应
+  const awardsSeq = useRef(0); // 申报列表请求序号：切学期时避免旧学期的申报短暂串到界面
 
   // 各页面的状态与处理（自定义 hook 挂在 App 层：切界面不丢状态，行为与拆分前一致）
   const chat = usePassSession({ setError, setSubmitting, setSubmitMsg, loadAwards });
-  const apply = useApply({ token, setError, setSubmitting, setSubmitMsg, loadAwards, loadBoard, classSel });
-  const filters = useApproveFilters({ awards, classSel, tab });
-  const manage = useManage({ token, role, myClassId, classSel, uploadClassId, setUploadClassId, loadClasses, loadBoard, loadAwards, setManageMsg });
+  const apply = useApply({ token, setError, setSubmitting, setSubmitMsg, loadAwards, loadBoard, classSel, semesterSel });
+  const filters = useApproveFilters({ awards, classSel, semesterSel, tab });
+  const manage = useManage({
+    token, role, myClassId, classSel, uploadClassId, setUploadClassId, loadClasses, loadBoard, loadAwards, setManageMsg,
+    semesters, semesterSel, openSemesterId, loadSemesters, handlePickSemester,
+  });
   const accounts = useAccounts({ token, role, tab, setManageMsg });
   const ai = useAiConfig({ token, setError, tab });
   const bgAdmin = useAppearanceAdmin({ token, bgSaved, setBgSaved, bgPick, setBgPick });
@@ -110,9 +120,9 @@ export default function App() {
   const feedback = useFeedback({ token, tab, setError });
   const funds = useFunds({ token, tab, classSel, setError });
 
-  async function loadBoard(cid) {
-    // 榜单按班级展示：未选班级一律不发请求，避免拿到后端跨班合并的榜单
-    if (!cid) {
+  async function loadBoard(cid, sid = semesterSel) {
+    // 榜单按「班级 + 学期」展示：缺任一项都不发请求，避免拿到后端跨班/跨学期合并的榜单
+    if (!cid || !sid) {
       boardSeq.current += 1; // 作废在途请求的结果
       setStudents([]);
       setMeta({});
@@ -123,7 +133,7 @@ export default function App() {
     setLoading(true);
     setError("");
     try {
-      const data = await fetchLeaderboard(cid);
+      const data = await fetchLeaderboard(cid, sid);
       if (my !== boardSeq.current) return; // 已有更新的请求发出（快速切班），丢弃本次旧响应
       setStudents(data.students || []);
       setMeta(data.meta || {});
@@ -144,21 +154,28 @@ export default function App() {
     localStorage.setItem(CLASS_KEY, id);
   }
   async function loadAwards() {
+    const filter = role === "admin" ? myClassId : classSel;
+    const my = ++awardsSeq.current;
+    if (!filter || !semesterSel) {
+      setAwards([]);
+      setAwardsLoading(false);
+      return;
+    }
     setAwardsLoading(true);
     setError("");
     try {
-      const filter = role === "admin" ? myClassId : classSel;
-      const data = await listAwards(filter || undefined);
+      const data = await listAwards(filter, semesterSel);
+      if (my !== awardsSeq.current) return; // 已切到别的班级/学期，丢弃过期响应
       setAwards(data.awards || []);
     } catch (err) {
-      setError(err.message);
+      if (my === awardsSeq.current) setError(err.message);
     } finally {
-      setAwardsLoading(false);
+      if (my === awardsSeq.current) setAwardsLoading(false);
     }
   }
-  async function loadClasses() {
+  async function loadClasses(sid = semesterSel) {
     try {
-      const d = await fetchClasses();
+      const d = await fetchClasses(sid);
       const list = d.classes || [];
       setClasses(list);
       // 选班兜底（榜单必须带 class_id，不能靠后端合并）：admin 固定本班（不问）；
@@ -176,6 +193,30 @@ export default function App() {
     } catch (err) {
       setError(err.message);
     }
+  }
+  // 学期列表：默认选中管理员开放申报的学期（没有则最新创建的学期）
+  async function loadSemesters() {
+    try {
+      const d = await fetchSemesters();
+      const list = d.semesters || [];
+      setSemesters(list);
+      setOpenSemesterId(d.active_id || "");
+      setSemesterSel((prev) => {
+        const cur = prev || localStorage.getItem(SEMESTER_KEY) || "";
+        if (cur && list.some((s) => s.id === cur)) return cur;
+        if (d.active_id && list.some((s) => s.id === d.active_id)) return d.active_id;
+        return list.length ? list[list.length - 1].id : "";
+      });
+    } catch (err) {
+      setError(err.message);
+    }
+  }
+  function handlePickSemester(id) {
+    if (!id || id === semesterSel) return;
+    setStudents([]);
+    setMeta({});
+    setSemesterSel(id);
+    localStorage.setItem(SEMESTER_KEY, id);
   }
 
   // 注册会话失效回调：任何带 token 的请求返回 401 时自动登出并弹登录窗
@@ -200,8 +241,11 @@ export default function App() {
       .catch(() => {});
   }, []);
   useEffect(() => {
-    loadClasses().then(() => setMounted(true));
+    loadSemesters().then(() => setMounted(true));
   }, [token, role, myClassId]);
+  useEffect(() => {
+    loadClasses(semesterSel);
+  }, [token, role, myClassId, semesterSel]);
   // 背景图案与访客开始界面是全站设置，公开接口：访客也要按管理员保存的值渲染
   useEffect(() => {
     getAppearance()
@@ -223,9 +267,17 @@ export default function App() {
       .catch(() => {});
   }, []);
   useEffect(() => {
-    loadBoard(classSel);
+    loadBoard(classSel, semesterSel);
     loadAwards();
-  }, [token, classSel, role, myClassId]);
+  }, [token, classSel, semesterSel, role, myClassId]);
+  // 申报页（加分申报 / 一遍过）始终面向管理员开放申报的学期：进入时自动切到该学期，
+  // 保证学号建议、榜单上下文与最终落库的学期一致（后端也会强制落到开放学期）
+  useEffect(() => {
+    if ((tab === "apply" || tab === "pass") && openSemesterId && semesterSel !== openSemesterId) {
+      setSemesterSel(openSemesterId);
+      localStorage.setItem(SEMESTER_KEY, openSemesterId);
+    }
+  }, [tab, openSemesterId, semesterSel]);
 
   async function handleLogin(e) {
     e.preventDefault();
@@ -307,16 +359,17 @@ export default function App() {
   }
 
   const pendingCount = awards.filter((a) => a.approved === "否").length;
+  const openSemester = semesters.find((s) => s.id === openSemesterId) || null;
 
   async function handleExport() {
     setError("");
-    // 榜单按班级导出：未选班级不导出，避免把跨班合并榜单导成「某班」文件
-    if (!classSel) {
-      setError("请先选择班级");
+    // 榜单按「班级 + 学期」导出：缺任一项都不导出，避免把合并数据导成「某班某学期」文件
+    if (!classSel || !semesterSel) {
+      setError(!classSel ? "请先选择班级" : "请先选择学期");
       return;
     }
     try {
-      await exportExcel(classSel);
+      await exportExcel(classSel, semesterSel);
     } catch (err) {
       setError(err.message);
     }
@@ -346,6 +399,7 @@ export default function App() {
             {/* 未选班级时副标题整行不显示（榜单按班展示，没选班也没有数据来源可写） */}
             {classSel && (
               <span className="meta">
+                {meta.semester_label ? `${meta.semester_label} · ` : ""}
                 {meta.source ? `数据来源：${meta.source}` : "暂无数据"} · 共 {meta.rows ?? 0} 条课程记录 · {students.length} 名学生
               </span>
             )}
@@ -413,6 +467,26 @@ export default function App() {
               右侧「导出 Excel」是该界面自己的操作（导出当前班级的综合测评总分），未选班级时禁用 */}
           {(token ? SCH_TABS : PUBLIC_TABS).includes(tab) && (
             <nav className="tabs">
+              {/* 学期选择：浏览榜单/审批/数据管理时可切换历史学期；申报页固定为开放申报学期 */}
+              {!["apply", "pass"].includes(tab) && semesters.length > 0 && (
+                <div className="semester-bar">
+                  <label>学期</label>
+                  <Dropdown
+                    value={semesterSel}
+                    onChange={handlePickSemester}
+                    options={semesters.map((s) => ({
+                      value: s.id,
+                      label: s.term ? `${s.label} · ${s.term}` : s.label,
+                    }))}
+                    placeholder="选择学期"
+                  />
+                </div>
+              )}
+              {["apply", "pass"].includes(tab) && openSemester && (
+                <span className="semester-hint" title="由管理员设置，学生申报自动提交到该学期">
+                  申报学期：{openSemester.label}
+                </span>
+              )}
               <GlassTabs
                 value={tab}
                 onChange={switchTab}
@@ -430,8 +504,8 @@ export default function App() {
               <button
                 className="btn small tabs-action"
                 onClick={handleExport}
-                disabled={!classSel}
-                title={classSel ? "导出当前班级的综合测评总分 xlsx" : "请先选择班级"}
+                disabled={!classSel || !semesterSel}
+                title={classSel && semesterSel ? "导出当前班级、当前学期的综合测评总分 xlsx" : "请先选择班级与学期"}
               >
                 导出 Excel
               </button>
@@ -501,6 +575,9 @@ export default function App() {
                 role={role}
                 myClassId={myClassId}
                 classes={classes}
+                semesters={semesters}
+                semesterSel={semesterSel}
+                openSemesterId={openSemesterId}
                 manageMsg={manageMsg}
               />
             )}

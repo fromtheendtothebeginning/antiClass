@@ -17,19 +17,29 @@ router = APIRouter()
 
 
 @router.get("/api/leaderboard")
-def leaderboard(class_id: str | None = None):
-    # 榜单必须指明班级：不带 class_id 会把多个班的学生按总分混排、统一编号名次，故直接拒绝
+def leaderboard(class_id: str | None = None, semester_id: str | None = None):
+    # 榜单必须指明班级与学期：不带会把多个班/多个学期的学生按总分混排、统一编号名次
     cid = (class_id or "").strip()
+    sid = (semester_id or "").strip()
     if not cid:
         raise HTTPException(status_code=400, detail="缺少 class_id：榜单按班级展示，请指定班级")
-    students = db.list_students(cid)
+    if not sid:
+        raise HTTPException(status_code=400, detail="缺少 semester_id：榜单按学期展示，请指定学期")
+    sem = db.get_semester(sid)
+    if not sem:
+        raise HTTPException(status_code=400, detail="学期不存在")
+    students = db.list_students(cid, sid)
     cls = db.get_class(cid)
+    cmeta = db.get_class_meta(cid, sid)
     meta = {
-        "rows": cls["row_count"] if cls else 0,
-        "source": cls["source"] if cls else "",
-        # 回传班级标识，便于前端/排查时自证当前展示的是哪个班（class_id 不存在时为空）
+        "rows": cmeta["row_count"],
+        "source": cmeta["source"],
+        # 回传班级/学期标识，便于前端/排查时自证当前展示的是哪份数据
         "class_id": cid,
         "class_name": cls["name"] if cls else "",
+        "semester_id": sid,
+        "semester_label": sem["label"],
+        "semester_term": sem["term"],
     }
     # 挂科（无参评资格）学生沉底且不占名次：rank 置 0，综合测评成绩列显示 -1
     ranked = [s for s in students if not s.get("failed")]
@@ -43,20 +53,26 @@ def leaderboard(class_id: str | None = None):
 
 
 @router.get("/api/export")
-def export(class_id: str | None = None):
-    # 榜单按班级导出：不带 class_id 会导出跨班混排的合并榜单（且文件名班级名为空），故直接拒绝
+def export(class_id: str | None = None, semester_id: str | None = None):
+    # 榜单按班级+学期导出：缺任一项都会导出跨班/跨学期混排的合并榜单，故直接拒绝
     cid = (class_id or "").strip()
+    sid = (semester_id or "").strip()
     if not cid:
         raise HTTPException(status_code=400, detail="缺少 class_id：请先选择要导出的班级")
+    if not sid:
+        raise HTTPException(status_code=400, detail="缺少 semester_id：请先选择要导出的学期")
+    sem = db.get_semester(sid)
+    if not sem:
+        raise HTTPException(status_code=400, detail="学期不存在")
     wb = Workbook()
     ws = wb.active
     ws.title = "Sheet1"
     headers = ["学号", "姓名", "德*15%", "智*60%", "体*10%", "美*5%", "劳*10%", "附加", "总分"]
 
-    # 文件名对齐附件「25-26下学期xx班综合测评总分.xlsx」：xx 处放实际班级名
+    # 文件名对齐附件「25-26下学期xx班综合测评总分.xlsx」：学年学期 + 实际班级名
     cls = db.get_class(cid)
     cls_name = cls["name"] if cls else ""
-    file_name = f"25-26下学期{cls_name}班综合测评总分.xlsx"
+    file_name = f"{sem['term'] or sem['label']}{cls_name}班综合测评总分.xlsx"
 
     # 样式严格对齐附件「25-26下学期xx班综合测评总分.xlsx」：
     # 等线 11 号（学号列仿宋）、全表细边框、学号列白色实底+文本格式、表头居中
@@ -81,7 +97,7 @@ def export(class_id: str | None = None):
     ws["A1"].number_format = "@"
     ws["B1"].number_format = "@"
 
-    for stu in db.list_students(cid):
+    for stu in db.list_students(cid, sid):
         total = -1 if stu.get("failed") else stu["total"]
         row = [
             str(stu["sid"]),
@@ -129,8 +145,11 @@ def export(class_id: str | None = None):
 
 
 @router.get("/api/export/evidence-zip")
-def export_evidence_zip(class_id: str | None = None, authorization: str = Header(default="")):
+def export_evidence_zip(class_id: str | None = None, semester_id: str | None = None, authorization: str = Header(default="")):
     session = require_token(authorization)
+    sem = (semester_id or "").strip() or None
+    if sem and not db.get_semester(sem):
+        raise HTTPException(status_code=400, detail="学期不存在")
     if class_id:
         check_class_scope(session, class_id)
     else:
@@ -138,7 +157,7 @@ def export_evidence_zip(class_id: str | None = None, authorization: str = Header
             class_id = session.get("class_id")
             if not class_id:
                 raise HTTPException(status_code=403, detail="账号未绑定班级，无法导出")
-    buf = build_evidence_zip(class_id)
+    buf = build_evidence_zip(class_id, sem)
     zip_name = f"evidence_backup_{datetime.now():%Y%m%d}.zip"
     return StreamingResponse(
         buf,
